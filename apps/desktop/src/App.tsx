@@ -30,6 +30,7 @@ import {
   type ActiveOperatorSession,
   sendSessionChat,
   listSessionChat,
+  revokeSessionChat,
   type ChatMessage,
 } from "./bridge";
 
@@ -123,6 +124,7 @@ export function App() {
   const [requestKeyboard, setRequestKeyboard] = useState(false);
   const [requestChat, setRequestChat] = useState(false);
   const [chatApprovals, setChatApprovals] = useState<Record<string, boolean>>({});
+  const [revokingChat, setRevokingChat] = useState<string | null>(null);
   const [viewerMouseActive, setViewerMouseActive] = useState(false);
   const [viewerKeyboardActive, setViewerKeyboardActive] = useState(false);
   const [hostMouseSession, setHostMouseSession] = useState<string | null>(null);
@@ -523,6 +525,20 @@ export function App() {
     } finally {
       setDecisionBusy(null);
     }
+  }
+
+  async function stopSessionChat(sessionId: string): Promise<void> {
+    if (revokingChat) return;
+    setRevokingChat(sessionId);
+    try {
+      await revokeSessionChat(sessionId);
+      setActiveSessions((current) => current.map((item) =>
+        item.session_id === sessionId ? { ...item, granted: item.granted.filter((grant) => grant !== "chat") } : item
+      ));
+      setFeedback("Chat revogado. Novas mensagens e leituras foram bloqueadas.");
+    } catch (error: unknown) {
+      setFeedback(error instanceof Error ? error.message : "Não foi possível revogar o chat.");
+    } finally { setRevokingChat(null); }
   }
 
   async function closeSession(sessionId: string): Promise<void> {
@@ -1096,6 +1112,12 @@ export function App() {
                             {hostKeyboardSession === item.session_id ? "Parar teclado remoto" : "Permitir teclado agora"}
                           </button>
                         )}
+                        {item.granted.includes("chat") &&
+                          <button className="secondary" type="button"
+                            disabled={revokingChat !== null}
+                            onClick={() => void stopSessionChat(item.session_id)}>
+                            {revokingChat === item.session_id ? "Revogando chat..." : "Revogar somente chat"}
+                          </button>}
                         <button className="secondary" type="button" disabled={ending}
                           onClick={() => void closeSession(item.session_id)}>Encerrar autorização</button>
                       </div>
