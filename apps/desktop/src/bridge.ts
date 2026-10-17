@@ -106,3 +106,16 @@ export async function terminateSession(sessionId: string): Promise<SessionReceip
   if (!isTauri()) throw new Error("É necessário usar o aplicativo instalado.");
   return invoke<SessionReceipt>("end_session", { sessionId });
 }
+
+/** Windows host: capture only after explicit user click and host consent. */
+export async function publishManualFrame(sessionId: string): Promise<void> {
+  if (!isTauri()) throw new Error("Captura disponível apenas no aplicativo instalado.");
+  return invoke<void>("publish_manual_screen_frame", { sessionId });
+}
+
+/** Signed, authorized retrieval. The PNG never comes from an unauthenticated URL. */
+export async function getAuthorizedFrame(sessionId: string): Promise<string> {
+  if (!isTauri()) throw new Error("Visualização disponível apenas no aplicativo instalado.");
+  const encoded = await invoke<string>("fetch_authorized_screen_frame", { sessionId });
+  return `data:image/png;base64,${encoded}`;
+}
