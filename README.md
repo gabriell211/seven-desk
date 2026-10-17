@@ -59,7 +59,7 @@ A tabela a seguir é o **escopo-alvo**, não uma lista de funcionalidades pronta
 | Operação | Reinicialização remota autorizada, reconexão, Wake-on-LAN em ambientes compatíveis, execução com serviço instalado |
 | Avançado | Impressão remota, áudio remoto, gravação consentida, modo de privacidade e API de integração |
 | Empresas | Organizações, RBAC, SSO/OIDC, auditoria, políticas, implantação administrada e opção de infraestrutura própria |
-| Distribuição | Aplicativo instalável, modo portátil onde permitido, atualização assinada, instaladores e desinstalação limpa |
+| Distribuição | Instalação oficial pelo **Instalador Seven Desk**, com identidade própria, atualização assinada e desinstalação limpa |
 
 ### Jornada principal de suporte
 
@@ -88,6 +88,29 @@ A tabela a seguir é o **escopo-alvo**, não uma lista de funcionalidades pronta
 | Navegador | Futuro | Não previsto inicialmente | Cliente web requer avaliação de segurança e restrições de dispositivos |
 
 **Nenhuma plataforma está homologada no estado inicial.** Cada combinação cliente/host terá matriz de compatibilidade, testes e limitações documentadas.
+
+## Instalação oficial — Instalador Seven Desk
+
+A distribuição oficial do aplicativo desktop deverá ser feita pelo **Instalador Seven Desk**, identificado com o nome, ícone, editora e versão do próprio produto. **O instalador, e não uma pasta de executáveis soltos ou scripts manuais, será o caminho padrão de instalação para usuários finais.**
+
+| Sistema | Formato de instalação planejado | Comportamento |
+| --- | --- | --- |
+| Windows | `SevenDesk-Setup-<versão>.exe` (instalador com assistente) | Instalar e registrar Seven Desk, criar atalhos e desinstalador; solicitar elevação apenas quando necessária |
+| Linux | Pacotes nativos `.deb` e `.rpm` conforme distribuição homologada | Instalar pelo gerenciador de pacotes, registrar aplicativo e permitir remoção limpa |
+| macOS | Instalador `.pkg` assinado e notarizado quando aplicável | Instalar o aplicativo com permissões documentadas e seguir autorizações nativas do sistema |
+
+**Fluxo de instalação previsto:** executar o pacote oficial → verificar origem e assinatura → conhecer versão e termos aplicáveis → escolher opções permitidas → instalar os componentes → criar os atalhos → abrir o Seven Desk e configurar permissões do host. Atalhos, inicialização com o sistema, instalação de serviço e acesso não assistido devem respeitar as escolhas e políticas autorizadas.
+
+**Requisitos obrigatórios de distribuição:**
+
+- Identidade visual do Seven Desk no assistente, aplicativo, atalhos, lista de programas instalados e desinstalador.
+- Versão, fabricante/editor e metadados consistentes; manifestos e hashes publicados nos releases.
+- Instalador assinado/verificado por plataforma, com rollback quando viável e mensagens claras em falhas.
+- Atualização de versões anteriores sem perder configurações válidas ou duplicar serviços; desinstalação limpa.
+- Instalação interativa por padrão; instalações administradas em organizações exigem políticas e documentação específicas.
+- Não incorporar credenciais, ID de outra máquina, acesso persistente ativo por padrão ou consentimento presumido.
+
+**Situação atual:** instaladores ainda **não foram implementados**. O requisito está rastreado nas issues [#15](https://github.com/gabriell211/seven-desk/issues/15), [#23](https://github.com/gabriell211/seven-desk/issues/23) e [#38](https://github.com/gabriell211/seven-desk/issues/38). Uma distribuição portátil não faz parte do fluxo de instalação oficial e, se for considerada no futuro, exigirá escopo e aprovação separados.
 
 ## Experiência de usuário (diretrizes)
 
@@ -194,7 +217,7 @@ As metas abaixo são **propostas de aceitação**, não medições obtidas.
 | Segurança | Testes de autenticação, autorização por operação, replay, revogação e isolamento de organizações |
 | Confiabilidade | Testes de perda temporária de conexão, troca de rede, encerramento abrupto e atualização |
 | Acessibilidade | Teclado, foco, rótulos acessíveis, contraste e leitores de tela |
-| Distribuição | Instalador/desinstalador, upgrade, assinatura e permissões verificadas por SO |
+| Distribuição | Instalador Seven Desk homologado por SO, instalação, upgrade, desinstalação e assinatura verificáveis |
 | Qualidade | Unitários, integração, E2E, interoperabilidade, fuzzing de protocolo e auditoria de dependências |
 
 ## Roadmap
@@ -204,7 +227,7 @@ Planejamento organizado por entrega incremental, sem datas ou versões fictícia
 | Fase | Entregáveis | Condição de saída |
 | --- | --- | --- |
 | **P0 — Fundação** | Monorepo, contratos, ADRs, CI, design system, identidade de dispositivo e protótipo de transporte | Build reproduzível, testes básicos e threat model |
-| **P1 — MVP assistido** | Windows↔Windows, conexão por ID, aceite, vídeo, teclado/mouse, desconexão e indicadores | E2E em duas máquinas reais, permissão negada e logs auditáveis |
+| **P1 — MVP assistido** | Windows↔Windows, conexão por ID, aceite, vídeo, teclado/mouse, instalador Seven Desk para Windows e indicadores | E2E em duas máquinas reais, permissão negada e logs auditáveis |
 | **P2 — Beta multiplataforma** | Linux/macOS, relay, transferência, clipboard, contatos, reconexão e instaladores | Matriz de SO/rede, testes de segurança e beta controlado |
 | **P3 — Operação profissional** | Não assistido, MFA, políticas, serviço, chat, múltiplos monitores e gestão de dispositivos | Fluxos negativos testados e auditoria de acessos |
 | **P4 — Enterprise / 1.0** | Organizações/RBAC, SSO, relatórios, atualização assinada, observabilidade e documentação operacional | Release checklist completo, requisitos críticos fechados e rollback testado |
