@@ -34,6 +34,15 @@ jobs:
           node-version: "22"
       - name: Smoke real backend loopback (no Docker or database)
         run: npm run smoke:server
+      - name: Signed-session integration (real Rust server, Linux)
+        run: npm run smoke:session -- --skip-build
+      - name: Preserve Linux session QA evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: seven-desk-session-api-linux
+          path: artifacts/qa/session-api-linux.json
+          if-no-files-found: warn
 
   desktop-ui:
     name: React TypeScript and static bundle
@@ -103,3 +112,12 @@ jobs:
         run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
       - name: Smoke native backend on clean Windows runner
         run: npm run smoke:server
+      - name: Signed-session integration (real Rust server, Windows)
+        run: npm run smoke:session -- --skip-build
+      - name: Preserve Windows session QA evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: seven-desk-session-api-windows
+          path: artifacts/qa/session-api-win32.json
+          if-no-files-found: warn
