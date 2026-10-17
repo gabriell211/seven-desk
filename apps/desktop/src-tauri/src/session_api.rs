@@ -97,7 +97,7 @@ async fn signed_request(method: Method, path: String, body: Vec<u8>) -> Result<V
         .no_proxy()
         .build()
         .map_err(|_| "Falha ao abrir conexão local".to_string())?;
-    let response = client
+    let mut response = client
         .request(method, format!("{API_BASE}{path}"))
         .header("x-seven-key", proof.public_key_hex)
         .header("x-seven-signature", proof.signature_hex)
@@ -121,14 +121,18 @@ async fn signed_request(method: Method, path: String, body: Vec<u8>) -> Result<V
     if response.content_length().is_some_and(|len| len > max_response as u64) {
         return Err("Resposta do servidor excede o limite permitido".to_string());
     }
-    let raw = response
-        .bytes()
+    let mut raw = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|_| "Erro ao ler resposta do servidor".to_string())?;
-    if raw.len() > max_response {
-        return Err("Resposta do servidor excede o limite permitido".to_string());
+        .map_err(|_| "Erro ao ler resposta do servidor".to_string())?
+    {
+        if chunk.len() > max_response.saturating_sub(raw.len()) {
+            return Err("Resposta do servidor excede o limite permitido".to_string());
+        }
+        raw.extend_from_slice(&chunk);
     }
-    Ok(raw.to_vec())
+    Ok(raw)
 }
 
 async fn read_device_id() -> Result<Uuid, String> {
