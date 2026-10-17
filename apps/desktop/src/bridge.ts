@@ -72,9 +72,9 @@ export interface ActiveOperatorSession {
 export type SessionState = "awaiting_consent" | "active" | "rejected" | "ended";
 
 /** Restricted to the native desktop; no private keys or raw signed URLs enter JS. */
-export async function requestSupport(targetId: string): Promise<SessionReceipt> {
+export async function requestSupport(targetId: string, requestMouse = false): Promise<SessionReceipt> {
   if (!isTauri()) throw new Error("Disponível somente no aplicativo Seven Desk.");
-  return invoke<SessionReceipt>("create_session_request", { targetId });
+  return invoke<SessionReceipt>("create_session_request", { targetId, requestMouse });
 }
 
 export async function pendingInvitations(): Promise<PendingInvitation[]> {
@@ -92,9 +92,13 @@ export async function activeOperatorSessions(): Promise<ActiveOperatorSession[]>
   return invoke<ActiveOperatorSession[]>("list_active_operator_sessions");
 }
 
-export async function decideInvitation(sessionId: string, approve: boolean): Promise<SessionReceipt> {
+export async function decideInvitation(
+  sessionId: string,
+  approve: boolean,
+  grantMouse = false,
+): Promise<SessionReceipt> {
   if (!isTauri()) throw new Error("É necessário usar o aplicativo instalado.");
-  return invoke<SessionReceipt>("decide_session", { sessionId, approve });
+  return invoke<SessionReceipt>("decide_session", { sessionId, approve, grantMouse });
 }
 
 export async function readSessionState(sessionId: string): Promise<SessionState> {
@@ -128,4 +132,25 @@ export async function getAuthorizedFrame(sessionId: string): Promise<string> {
   if (!isTauri()) throw new Error("Visualização disponível apenas no aplicativo instalado.");
   const encoded = await invoke<string>("fetch_authorized_screen_frame", { sessionId });
   return `data:image/png;base64,${encoded}`;
+}
+
+/** Only mouse events, never arbitrary code or keyboard shortcuts. */
+export type RemoteMouseEvent =
+  | { type: "move"; x: number; y: number }
+  | { type: "click"; x: number; y: number; button: "left" | "right" | "middle" }
+  | { type: "scroll"; x: number; y: number; steps: number };
+
+export async function sendRemoteMouse(sessionId: string, event: RemoteMouseEvent): Promise<void> {
+  if (!isTauri()) throw new Error("Controle de mouse disponível apenas no aplicativo instalado.");
+  return invoke<void>("send_remote_mouse", { sessionId, event });
+}
+
+export async function configureHostMouse(sessionId: string, enabled: boolean): Promise<void> {
+  if (!isTauri()) throw new Error("Controle de mouse disponível apenas no aplicativo instalado.");
+  return invoke<void>("configure_host_mouse", { sessionId, enabled });
+}
+
+export async function pollHostMouse(sessionId: string): Promise<number> {
+  if (!isTauri()) throw new Error("Controle de mouse disponível apenas no aplicativo instalado.");
+  return invoke<number>("poll_host_mouse", { sessionId });
 }
