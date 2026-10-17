@@ -1,6 +1,9 @@
 #![forbid(unsafe_code)]
 
+mod server_config;
 mod session_api;
+
+use server_config::configured_server_url;
 
 use serde::Serialize;
 use seven_identity::{Identity, SystemKeyStore};
@@ -78,12 +81,14 @@ async fn send_presence_request(path: &'static str) -> Result<String, String> {
     .await
     .map_err(|_| "Falha ao preparar a identidade".to_string())??;
 
+    let base = configured_server_url()?;
     let client = reqwest::Client::builder()
+        .no_proxy()
         .timeout(Duration::from_secs(5))
         .build()
         .map_err(|_| "Não foi possível inicializar a conexão local".to_string())?;
     let response = client
-        .post(format!("http://127.0.0.1:43821{path}"))
+        .post(format!("{base}{path}"))
         .header("x-seven-key", proof.public_key_hex)
         .header("x-seven-signature", proof.signature_hex)
         .header("x-seven-nonce", proof.nonce.to_string())
@@ -121,6 +126,7 @@ pub fn run() {
             initialize_identity,
             register_local_device,
             heartbeat_local_device,
+            server_config::backend_status,
             session_api::create_session_request,
             session_api::list_pending_invitations,
             session_api::list_active_authorizations,
