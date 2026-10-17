@@ -15,11 +15,11 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use seven_protocol::{
-    Capability, DeviceId, SessionId, SessionMachine, SessionRequest, SessionState,
+    Capability, DeviceId, MouseEvent, SessionId, SessionMachine, SessionRequest, SessionState,
 };
 use seven_security::{NonceWindow, RequestProof, verify};
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, VecDeque},
     sync::{Arc, Mutex, RwLock},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -32,6 +32,10 @@ const MAX_PAYLOAD_SIZE: usize = 64 * 1_024;
 const MAX_FRAME_BYTES: usize = 2 * 1_024 * 1_024;
 const MAX_CACHED_FRAMES: usize = 8;
 const FRAME_FRESHNESS_MS: u64 = 15_000;
+const MAX_INPUT_SESSIONS: usize = 8;
+const MAX_INPUT_QUEUE: usize = 32;
+const INPUT_EVENT_TTL_MS: u64 = 2_000;
+const MIN_INPUT_INTERVAL_MS: u64 = 20;
 
 #[derive(Default)]
 pub struct AppState {
@@ -39,6 +43,9 @@ pub struct AppState {
     sessions: Mutex<HashMap<SessionId, SessionMachine>>,
     // Experimental single latest-frame buffer. Never persist desktop pixels.
     frames: Mutex<HashMap<SessionId, StoredFrame>>,
+    // Transient pointer events; only the authenticated host consumes these.
+    // Never persist user input or allow unattended input injection.
+    input_queues: Mutex<HashMap<SessionId, InputQueue>>,
     nonce_window: NonceWindow,
 }
 
@@ -50,6 +57,7 @@ pub enum ApiError {
     NotFound,
     Conflict,
     Unavailable,
+    RateLimited,
 }
 
 impl IntoResponse for ApiError {
@@ -61,6 +69,7 @@ impl IntoResponse for ApiError {
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             Self::Conflict => (StatusCode::CONFLICT, "invalid_session_state"),
             Self::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "temporary_unavailable"),
+            Self::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
         };
         (status, Json(serde_json::json!({ "error": message }))).into_response()
     }
@@ -416,6 +425,11 @@ async fn configure_screen_delivery(
             .lock()
             .map_err(|_| ApiError::Unavailable)?
             .remove(&session_id);
+        state
+            .input_queues
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
+            .remove(&session_id);
     }
     Ok(Json(ScreenDeliveryResponse {
         enabled: input.enabled,
@@ -486,6 +500,97 @@ async fn read_frame(
         frame.png.clone(),
     )
         .into_response())
+}
+
+/// Events live in memory briefly and are never recorded to disk.
+#[derive(Default)]
+struct InputQueue {
+    events: VecDeque<(u64, MouseEvent)>,
+    last_accepted_ms: Option<u64>,
+}
+
+fn authorized_input_peer(
+    machine: &mut SessionMachine,
+    actor: DeviceId,
+    send: bool,
+    now: u64,
+) -> Result<(), ApiError> {
+    machine.expire(now);
+    let (host, operator) = machine.participants().ok_or(ApiError::Forbidden)?;
+    if (send && actor != operator) || (!send && actor != host) {
+        return Err(ApiError::Forbidden);
+    }
+    if !machine.permits(Capability::Input, now) || !machine.permits_screen_delivery(now) {
+        return Err(ApiError::Forbidden);
+    }
+    Ok(())
+}
+
+/// Signed operator-to-host pointer relay. This endpoint never injects OS
+/// events; the receiving *foreground* host application must explicitly opt in.
+/// Validate scope while holding the same session lock as revocation/termination.
+async fn enqueue_input(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<StatusCode, ApiError> {
+    let path = format!("/v1/sessions/{id}/input");
+    let operator = authenticated(&state, &headers, "POST", &path, &body)?;
+    known(&state, operator)?;
+    let event: MouseEvent = serde_json::from_slice(&body).map_err(|_| ApiError::Invalid)?;
+    event.validate().map_err(|_| ApiError::Invalid)?;
+    let now = now_ms();
+    let session_id = SessionId(id);
+    let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
+    let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
+    authorized_input_peer(machine, operator, true, now)?;
+    let mut queues = state.input_queues.lock().map_err(|_| ApiError::Unavailable)?;
+    queues.retain(|_, queue| {
+        queue.events.retain(|(at, _)| now.saturating_sub(*at) <= INPUT_EVENT_TTL_MS);
+        !queue.events.is_empty()
+    });
+    if !queues.contains_key(&session_id) && queues.len() >= MAX_INPUT_SESSIONS {
+        return Err(ApiError::RateLimited);
+    }
+    let queue = queues.entry(session_id).or_default();
+    if queue
+        .last_accepted_ms
+        .is_some_and(|last| now.saturating_sub(last) < MIN_INPUT_INTERVAL_MS)
+        || queue.events.len() >= MAX_INPUT_QUEUE
+    {
+        return Err(ApiError::RateLimited);
+    }
+    queue.events.push_back((now, event));
+    queue.last_accepted_ms = Some(now);
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// Only the destination host retrieves input. Delivery is *at most once*:
+/// a successful fetch drains a bounded batch, with stale events discarded.
+async fn dequeue_input(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<MouseEvent>>, ApiError> {
+    let path = format!("/v1/sessions/{id}/input");
+    let host = authenticated(&state, &headers, "GET", &path, &[])?;
+    known(&state, host)?;
+    let now = now_ms();
+    let session_id = SessionId(id);
+    let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
+    let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
+    authorized_input_peer(machine, host, false, now)?;
+    let mut queues = state.input_queues.lock().map_err(|_| ApiError::Unavailable)?;
+    let mut batch = Vec::new();
+    if let Some(queue) = queues.remove(&session_id) {
+        for (at, event) in queue.events {
+            if now.saturating_sub(at) <= INPUT_EVENT_TTL_MS {
+                batch.push(event);
+            }
+        }
+    }
+    Ok(Json(batch))
 }
 
 #[derive(Serialize)]
@@ -583,6 +688,11 @@ async fn terminate(
         .lock()
         .map_err(|_| ApiError::Unavailable)?
         .remove(&session_id);
+    state
+        .input_queues
+        .lock()
+        .map_err(|_| ApiError::Unavailable)?
+        .remove(&session_id);
     Ok(Json(SessionResponse {
         session_id,
         status: "ended",
@@ -612,6 +722,13 @@ async fn revoke(
         .revoke(actor, input.capability)
         .map_err(|_| ApiError::Forbidden)?;
     let ended = matches!(machine.state(), SessionState::Ended);
+    if ended || input.capability == Capability::Input || input.capability == Capability::Screen {
+        state
+            .input_queues
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
+            .remove(&session_id);
+    }
     if ended || input.capability == Capability::Screen {
         state
             .frames
@@ -653,6 +770,11 @@ async fn get_session(
     if machine.expire(now_ms()) {
         state
             .frames
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
+            .remove(&SessionId(id));
+        state
+            .input_queues
             .lock()
             .map_err(|_| ApiError::Unavailable)?
             .remove(&SessionId(id));
@@ -699,6 +821,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/v1/sessions/{id}/screen-delivery",
             post(configure_screen_delivery),
         )
+        .route("/v1/sessions/{id}/input", get(dequeue_input).post(enqueue_input))
         .route("/v1/sessions/{id}/decision", post(decide))
         .route("/v1/sessions/{id}/revoke", post(revoke))
         .with_state(state)
