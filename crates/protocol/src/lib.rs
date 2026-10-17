@@ -104,6 +104,8 @@ pub enum ProtocolError {
 pub struct SessionMachine {
     state: SessionState,
     participants: Option<(DeviceId, DeviceId)>,
+    // Host can pause frame delivery without terminating the grant.
+    screen_delivery_enabled: bool,
 }
 
 impl Default for SessionState {
@@ -156,6 +158,9 @@ impl SessionMachine {
             granted,
             session_deadline_ms: now_ms.saturating_add(MAX_ACTIVE_SESSION_MS),
         };
+        // Approval grants the ability to share, not permission for the client
+        // to start capturing automatically. Only the host UI can publish.
+        self.screen_delivery_enabled = true;
         Ok(())
     }
 
@@ -182,6 +187,7 @@ impl SessionMachine {
         }
         granted.remove(&permission);
         if permission == Capability::Screen {
+            self.screen_delivery_enabled = false;
             self.state = SessionState::Ended;
         }
         Ok(())
@@ -192,6 +198,7 @@ impl SessionMachine {
             SessionState::AwaitingConsent(r) | SessionState::Active { request: r, .. }
                 if actor == r.host || actor == r.operator =>
             {
+                self.screen_delivery_enabled = false;
                 self.state = SessionState::Ended;
                 Ok(())
             }
@@ -209,9 +216,40 @@ impl SessionMachine {
             _ => false,
         };
         if expired {
+            self.screen_delivery_enabled = false;
             self.state = SessionState::Ended;
         }
         expired
+    }
+
+    /// Host-side kill switch for the frame channel. Turning it off cannot
+    /// be overridden by an operator, an in-flight upload, or the viewer UI.
+    pub fn set_screen_delivery(
+        &mut self,
+        actor: DeviceId,
+        enabled: bool,
+        now_ms: u64,
+    ) -> Result<(), ProtocolError> {
+        let SessionState::Active {
+            request,
+            granted,
+            session_deadline_ms,
+        } = &self.state
+        else {
+            return Err(ProtocolError::InvalidTransition);
+        };
+        if request.host != actor {
+            return Err(ProtocolError::NotHost);
+        }
+        if *session_deadline_ms <= now_ms || !granted.contains(&Capability::Screen) {
+            return Err(ProtocolError::InvalidTransition);
+        }
+        self.screen_delivery_enabled = enabled;
+        Ok(())
+    }
+
+    pub fn permits_screen_delivery(&self, now_ms: u64) -> bool {
+        self.screen_delivery_enabled && self.permits(Capability::Screen, now_ms)
     }
 
     pub fn permits(&self, capability: Capability, now_ms: u64) -> bool {
@@ -287,6 +325,33 @@ mod tests {
         sm.revoke(r.host, Capability::Screen).unwrap();
         assert_eq!(sm.state(), &SessionState::Ended);
         assert_eq!(sm.request(r, 100), Err(ProtocolError::InvalidTransition));
+    }
+
+    #[test]
+    fn host_can_pause_and_resume_frame_delivery_without_reapproval() {
+        let r = request();
+        let mut session = SessionMachine::default();
+        session.request(r.clone(), 100).unwrap();
+        session
+            .accept(r.host, BTreeSet::from([Capability::Screen]), 200)
+            .unwrap();
+        assert!(session.permits_screen_delivery(201));
+        assert_eq!(
+            session.set_screen_delivery(r.operator, false, 202),
+            Err(ProtocolError::NotHost)
+        );
+        assert!(session.permits_screen_delivery(202));
+        session.set_screen_delivery(r.host, false, 203).unwrap();
+        assert!(!session.permits_screen_delivery(203));
+        assert!(session.permits(Capability::Screen, 203));
+        session.set_screen_delivery(r.host, true, 204).unwrap();
+        assert!(session.permits_screen_delivery(204));
+        session.revoke(r.host, Capability::Screen).unwrap();
+        assert!(!session.permits_screen_delivery(205));
+        assert_eq!(
+            session.set_screen_delivery(r.host, true, 205),
+            Err(ProtocolError::InvalidTransition)
+        );
     }
 
     #[test]
