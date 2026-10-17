@@ -1,0 +1,24 @@
+# Seven Desk controlled-lab proxy ONLY — not production-ready.
+# Replace hostname and VPN CIDR with your actual lab configuration.
+# Obtain a valid publicly trusted TLS certificate or a certificate trusted
+# by BOTH devices before attempting to connect the desktop clients.
+#
+# WARNING: do not remove the VPN IP restriction. There is not yet
+# tenant isolation, durable storage, anti-DoS or end-to-end media encryption.
+lab-seven.example.com {
+    @not_vpn {
+        not remote_ip 10.42.0.0/16
+    }
+    respond @not_vpn "Seven Desk: VPN required" 403
+
+    request_body {
+        max_size 3MB
+    }
+
+    header {
+        X-Content-Type-Options "nosniff"
+        Cache-Control "no-store"
+    }
+
+    reverse_proxy 127.0.0.1:43821
+}
