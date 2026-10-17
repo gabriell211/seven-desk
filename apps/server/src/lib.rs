@@ -361,14 +361,11 @@ fn valid_png_header(png: &[u8]) -> bool {
 }
 
 fn authorized_frame_peer(
-    state: &AppState,
+    machine: &mut SessionMachine,
     actor: DeviceId,
-    id: SessionId,
     upload: bool,
     now: u64,
 ) -> Result<(), ApiError> {
-    let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
-    let machine = sessions.get_mut(&id).ok_or(ApiError::NotFound)?;
     machine.expire(now);
     let Some((host, operator)) = machine.participants() else {
         return Err(ApiError::Forbidden);
@@ -394,7 +391,11 @@ async fn publish_frame(
     let host = authenticated(&state, &headers, "POST", &path, &body)?;
     known(&state, host)?;
     let now = now_ms();
-    authorized_frame_peer(&state, host, SessionId(id), true, now)?;
+    // Always lock sessions before frames. A concurrent revocation cannot be
+    // followed by a late upload restoring previously cached screen pixels.
+    let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
+    let machine = sessions.get_mut(&SessionId(id)).ok_or(ApiError::NotFound)?;
+    authorized_frame_peer(machine, host, true, now)?;
     if !valid_png_header(&body) {
         return Err(ApiError::Invalid);
     }
@@ -424,7 +425,11 @@ async fn read_frame(
     let operator = authenticated(&state, &headers, "GET", &path, &[])?;
     known(&state, operator)?;
     let now = now_ms();
-    authorized_frame_peer(&state, operator, SessionId(id), false, now)?;
+    // Verify permission and copy pixels while holding the same lock ordering
+    // as termination and publishing: sessions -> frames.
+    let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
+    let machine = sessions.get_mut(&SessionId(id)).ok_or(ApiError::NotFound)?;
+    authorized_frame_peer(machine, operator, false, now)?;
     let frames = state.frames.lock().map_err(|_| ApiError::Unavailable)?;
     let frame = frames.get(&SessionId(id)).ok_or(ApiError::NotFound)?;
     if now.saturating_sub(frame.received_at_ms) > FRAME_FRESHNESS_MS {
@@ -529,6 +534,8 @@ async fn terminate(
     let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
     let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
     machine.terminate(actor).map_err(|_| ApiError::Forbidden)?;
+    // Purge cached private pixels before releasing the session lock.
+    state.frames.lock().map_err(|_| ApiError::Unavailable)?.remove(&session_id);
     Ok(Json(SessionResponse {
         session_id,
         status: "ended",
@@ -557,13 +564,13 @@ async fn revoke(
     machine
         .revoke(actor, input.capability)
         .map_err(|_| ApiError::Forbidden)?;
+    let ended = matches!(machine.state(), SessionState::Ended);
+    if ended || input.capability == Capability::Screen {
+        state.frames.lock().map_err(|_| ApiError::Unavailable)?.remove(&session_id);
+    }
     Ok(Json(SessionResponse {
         session_id,
-        status: if matches!(machine.state(), SessionState::Ended) {
-            "ended"
-        } else {
-            "active"
-        },
+        status: if ended { "ended" } else { "active" },
     }))
 }
 
@@ -592,7 +599,9 @@ async fn get_session(
     if !member {
         return Err(ApiError::Forbidden);
     }
-    machine.expire(now_ms());
+    if machine.expire(now_ms()) {
+        state.frames.lock().map_err(|_| ApiError::Unavailable)?.remove(&SessionId(id));
+    }
     let value = match machine.state() {
         SessionState::AwaitingConsent(_) => PublicState::AwaitingConsent,
         SessionState::Active { .. } => PublicState::Active,
@@ -1235,7 +1244,8 @@ mod tests {
 
     #[tokio::test]
     async fn frame_requires_host_consent_and_operator_identity_and_revocation_stops_access() {
-        let service = router(Arc::new(AppState::default()));
+        let state = Arc::new(AppState::default());
+        let service = router(state.clone());
         let operator = SigningKey::from_bytes(&[61_u8; 32]);
         let host = SigningKey::from_bytes(&[62_u8; 32]);
         let outsider = SigningKey::from_bytes(&[63_u8; 32]);
@@ -1318,6 +1328,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(uploaded.status(), StatusCode::NO_CONTENT);
+        assert!(state.frames.lock().unwrap().contains_key(&id));
 
         for bad in [&host, &outsider] {
             let response = service
@@ -1355,6 +1366,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(revoked.status(), StatusCode::OK);
+        assert!(!state.frames.lock().unwrap().contains_key(&id));
         for (key, method, body) in [(&host, "POST", png.clone()), (&operator, "GET", vec![])] {
             let response = service
                 .clone()
