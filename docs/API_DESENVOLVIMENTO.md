@@ -28,6 +28,8 @@ A mensagem canônica assinada é formada pelas linhas `seven-desk/request/v1`, m
 | `POST` | `/v1/sessions` | Solicitar sessão somente com operador e host ativos, assinatura e escopo tipado |
 | `GET` | `/v1/sessions/inbox` | Consultar convites pendentes somente do host autenticado |
 | `GET` | `/v1/sessions/host/active` | Listar somente autorizações ativas do host autenticado para revogar após reabrir o aplicativo |
+| `POST` | `/v1/sessions/{id}/frame` | Host autorizado publica o último quadro PNG, limitado a 2 MiB |
+| `GET` | `/v1/sessions/{id}/frame` | Operador da sessão autorizada lê o quadro recente, com `Cache-Control: no-store` |
 | `GET` | `/v1/sessions/{id}` | Consultar estado quando autenticado e participante |
 | `POST` | `/v1/sessions/{id}/decision` | Host aprovar ou rejeitar capacidades solicitadas |
 | `POST` | `/v1/sessions/{id}/revoke` | Host revogar uma capacidade ativa |
@@ -57,6 +59,14 @@ Depois de ativar a identidade e registrar a presença no servidor de desenvolvim
 4. A interface indica explicitamente que uma negociação autorizada **não significa que os pixels estejam sendo transmitidos**. Nenhuma API de captura, injeção de teclado/mouse, porta WAN ou acesso não assistido é ativada.
 
 **Limite importante:** esta etapa só negocia metadados de sessão. O servidor bindado em `127.0.0.1` não conecta dois computadores diferentes via Internet. Para usar o recurso em duas máquinas reais faltam control plane seguro acessível de ambas, transporte autenticado e serviço do host. Não exponha o servidor experimental na rede para contornar essa limitação.
+
+## Canal experimental de quadros de tela (localhost)
+
+O backend agora dispõe de um **buffer temporário real de bytes PNG**, não um vídeo simulado: host autenticado publica e operador autenticado consulta o último quadro de uma sessão explicitamente aprovada com capacidade `screen`. A API verifica **papel host/operador e autorização vigente a cada solicitação**, inclusive depois de revogação; nenhum dispositivo que não participa da sessão pode baixar os pixels. A resposta é `image/png` com `Cache-Control: no-store`.
+
+**Limites da prova de conceito:** cada quadro tem no máximo 2 MiB, o cache só mantém até 8 sessões simultâneas e só disponibiliza quadros recebidos nos últimos 15 segundos. Os bytes ficam **apenas em memória**. O servidor verifica assinatura, cabeçalho IHDR e dimensões declaradas (máximo 8192 × 8192), mas a decodificação da imagem ainda deve ser tratada como entrada não confiável. A revogação bloqueia imediatamente novas leituras mesmo antes da limpeza do cache.
+
+**Segurança:** este endpoint só está habilitado no servidor local de desenvolvimento, em `127.0.0.1`. **Não há captura nativa automatizada, stream contínuo, E2EE nem relé entre computadores** nesta entrega. O servidor **não deve** ser exposto à LAN ou Internet. A próxima etapa é integrar captura pelo host, mostrar o frame no viewer e implementar o transporte criptografado remoto antes de anunciar acesso real.
 
 ## Convites de suporte
 
