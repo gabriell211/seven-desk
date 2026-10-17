@@ -43,6 +43,12 @@ export async function getBackendStatus(_signal?: AbortSignal): Promise<BackendSt
   return invoke<BackendStatus>("backend_status");
 }
 
+/** Presence is authenticated by the native key; a contact is not an authorization. */
+export async function checkDevicePresence(deviceId: string): Promise<boolean> {
+  if (!isTauri()) throw new Error("Consulta disponível apenas no Seven Desk instalado.");
+  return invoke<boolean>("check_device_presence", { deviceId });
+}
+
 export interface SessionReceipt {
   session_id: string;
   status: string;
