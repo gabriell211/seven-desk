@@ -14,6 +14,7 @@ import {
   terminateSession,
   publishManualFrame,
   getAuthorizedFrame,
+  setScreenDelivery,
   type LocalStatus,
   type SessionReceipt,
   type PendingInvitation,
@@ -51,6 +52,7 @@ export function App() {
   const [decisionBusy, setDecisionBusy] = useState<string | null>(null);
   const [ending, setEnding] = useState(false);
   const [frameBusy, setFrameBusy] = useState(false);
+  const [sharingBusy, setSharingBusy] = useState(false);
   const [lastFrame, setLastFrame] = useState<string | null>(null);
   const [streamingSession, setStreamingSession] = useState<string | null>(null);
   const [viewingSession, setViewingSession] = useState<string | null>(null);
@@ -203,7 +205,7 @@ export function App() {
         await publishManualFrame(id);
       } catch (error: unknown) {
         if (!cancelled) {
-          setStreamingSession(null);
+          void stopSharing(id);
           setFeedback(error instanceof Error ? error.message : "Compartilhamento interrompido.");
         }
       } finally {
@@ -212,7 +214,7 @@ export function App() {
     }
     void capture();
     const timer = window.setInterval(() => void capture(), 1_000);
-    const stopIfHidden = () => { if (document.hidden) setStreamingSession(null); };
+    const stopIfHidden = () => { if (document.hidden) void stopSharing(id); };
     document.addEventListener("visibilitychange", stopIfHidden);
     return () => {
       cancelled = true;
@@ -255,7 +257,7 @@ export function App() {
 
   useEffect(() => {
     if (!presenceActive || !backendReady) {
-      setStreamingSession(null);
+      if (streamingSession) void stopSharing(streamingSession);
       setViewingSession(null);
       setLastFrame(null);
     }
@@ -270,7 +272,7 @@ export function App() {
 
   useEffect(() => {
     if (streamingSession && !activeSessions.some((session) => session.session_id === streamingSession)) {
-      setStreamingSession(null);
+      void stopSharing(streamingSession);
     }
   }, [activeSessions, streamingSession]);
 
@@ -296,7 +298,7 @@ export function App() {
       setInbox((previous) => previous.filter((item) => item.session_id !== sessionId));
       // The signed authorization listing refreshes automatically after approval.
       setFeedback(approve
-        ? "Negociação autorizada. Compartilhamento de tela ainda não está implementado."
+        ? "Negociação autorizada. O host pode compartilhar quadros da tela explicitamente."
         : "Solicitação recusada com sucesso.");
     } catch (error: unknown) {
       setFeedback(error instanceof Error ? error.message : "Não foi possível responder ao convite.");
@@ -326,10 +328,43 @@ export function App() {
     }
   }
 
+  async function stopSharing(sessionId: string): Promise<void> {
+    // Stop local capture immediately, even if the server is offline. The
+    // backend independently deletes cached pixels when the signed stop arrives.
+    setStreamingSession(null);
+    try {
+      await setScreenDelivery(sessionId, false);
+      setFeedback("Compartilhamento parado e último quadro apagado do servidor.");
+    } catch {
+      setFeedback("Captura local interrompida. Não foi possível confirmar a limpeza no servidor; os quadros remotos expiram automaticamente.");
+    }
+  }
+
+  async function toggleSharing(sessionId: string): Promise<void> {
+    if (sharingBusy) return;
+    if (streamingSession === sessionId) {
+      await stopSharing(sessionId);
+      return;
+    }
+    setSharingBusy(true);
+    try {
+      await setScreenDelivery(sessionId, true);
+      setStreamingSession(sessionId);
+      setFeedback("Compartilhamento iniciado com autorização do host e botão de parada visível.");
+    } catch (error: unknown) {
+      setFeedback(error instanceof Error ? error.message : "Não foi possível ativar o compartilhamento.");
+    } finally {
+      setSharingBusy(false);
+    }
+  }
+
   async function shareManualFrame(sessionId: string): Promise<void> {
     if (frameBusy) return;
     setFrameBusy(true);
     try {
+      // The host may have paused the previous stream; a fresh explicit click
+      // is required before a new single-frame publication.
+      await setScreenDelivery(sessionId, true);
       await publishManualFrame(sessionId);
       setFeedback("Quadro da tela principal enviado após sua autorização. Nenhum streaming contínuo foi iniciado.");
     } catch (error: unknown) {
@@ -404,7 +439,7 @@ export function App() {
           <div className="panel" role="status" style={{ margin: 18, padding: 15, borderColor: "var(--accent)" }}>
             <strong>● Compartilhamento ativo — até 1 quadro por segundo</strong>
             <p>A tela principal está sendo capturada enquanto esta janela permanecer aberta. Sem controle remoto ou áudio.</p>
-            <button className="secondary" type="button" onClick={() => setStreamingSession(null)}>Parar compartilhamento agora</button>
+            <button className="secondary" type="button" onClick={() => { if (streamingSession) void stopSharing(streamingSession); }}>Parar compartilhamento agora</button>
             <button className="secondary" type="button" disabled={ending}
               onClick={() => { if (streamingSession) void closeSession(streamingSession); }}>Encerrar autorização de tela</button>
           </div>
@@ -570,8 +605,8 @@ export function App() {
                           {frameBusy ? "Capturando..." : "Compartilhar um quadro"}
                         </button>
                         <button className="secondary" type="button"
-                          disabled={status?.operating_system !== "windows"}
-                          onClick={() => setStreamingSession((current) => current === item.session_id ? null : item.session_id)}>
+                          disabled={sharingBusy || status?.operating_system !== "windows"}
+                          onClick={() => void toggleSharing(item.session_id)}>
                           {streamingSession === item.session_id ? "Parar quadros" : "Iniciar quadros (~1 FPS)"}
                         </button>
                         <button className="secondary" type="button" disabled={ending}

@@ -373,10 +373,53 @@ fn authorized_frame_peer(
     if (upload && actor != host) || (!upload && actor != operator) {
         return Err(ApiError::Forbidden);
     }
-    if !machine.permits(Capability::Screen, now) {
+    if !machine.permits_screen_delivery(now) {
         return Err(ApiError::Forbidden);
     }
     Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScreenDeliveryRequest {
+    enabled: bool,
+}
+
+#[derive(Serialize)]
+struct ScreenDeliveryResponse {
+    enabled: bool,
+}
+
+/// The authenticated host can pause frame delivery immediately without
+/// terminating the screen grant. The same session->frame lock order prevents
+/// an in-flight upload from resurrecting pixels after a stop request.
+async fn configure_screen_delivery(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<ScreenDeliveryResponse>, ApiError> {
+    let path = format!("/v1/sessions/{id}/screen-delivery");
+    let host = authenticated(&state, &headers, "POST", &path, &body)?;
+    known(&state, host)?;
+    let input: ScreenDeliveryRequest =
+        serde_json::from_slice(&body).map_err(|_| ApiError::Invalid)?;
+    let session_id = SessionId(id);
+    let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
+    let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
+    machine
+        .set_screen_delivery(host, input.enabled, now_ms())
+        .map_err(|_| ApiError::Forbidden)?;
+    if !input.enabled {
+        state
+            .frames
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
+            .remove(&session_id);
+    }
+    Ok(Json(ScreenDeliveryResponse {
+        enabled: input.enabled,
+    }))
 }
 
 /// Explicitly consented host uploads a single PNG frame. This is a local
@@ -652,6 +695,10 @@ pub fn router(state: Arc<AppState>) -> Router {
                 .layer(DefaultBodyLimit::max(MAX_FRAME_BYTES)),
         )
         .route("/v1/sessions/{id}", get(get_session).delete(terminate))
+        .route(
+            "/v1/sessions/{id}/screen-delivery",
+            post(configure_screen_delivery),
+        )
         .route("/v1/sessions/{id}/decision", post(decide))
         .route("/v1/sessions/{id}/revoke", post(revoke))
         .with_state(state)
@@ -1365,6 +1412,59 @@ mod tests {
                 .as_ref(),
             png
         );
+
+        // A host's explicit Stop must clear the private frame and deny a
+        // concurrent/late upload until the same host deliberately resumes.
+        let delivery_path = format!("/v1/sessions/{}/screen-delivery", id.0);
+        let refused = service
+            .clone()
+            .oneshot(signed_request(
+                &operator,
+                "POST",
+                &delivery_path,
+                br#"{"enabled":false}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+        let stopped = service
+            .clone()
+            .oneshot(signed_request(
+                &host,
+                "POST",
+                &delivery_path,
+                br#"{"enabled":false}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(stopped.status(), StatusCode::OK);
+        assert!(!state.frames.lock().unwrap().contains_key(&id));
+        for (key, method, body) in [(&host, "POST", png.clone()), (&operator, "GET", vec![])] {
+            let response = service
+                .clone()
+                .oneshot(signed_request(key, method, &path, body))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        }
+        let resumed = service
+            .clone()
+            .oneshot(signed_request(
+                &host,
+                "POST",
+                &delivery_path,
+                br#"{"enabled":true}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resumed.status(), StatusCode::OK);
+        let new_frame = service
+            .clone()
+            .oneshot(signed_request(&host, "POST", &path, png.clone()))
+            .await
+            .unwrap();
+        assert_eq!(new_frame.status(), StatusCode::NO_CONTENT);
+        assert!(state.frames.lock().unwrap().contains_key(&id));
 
         let revoke_path = format!("/v1/sessions/{}/revoke", id.0);
         let revoked = service

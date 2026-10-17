@@ -29,6 +29,7 @@ A mensagem canônica assinada é formada pelas linhas `seven-desk/request/v1`, m
 | `GET` | `/v1/sessions/inbox` | Consultar convites pendentes somente do host autenticado |
 | `GET` | `/v1/sessions/host/active` | Listar somente autorizações ativas do host autenticado para revogar após reabrir o aplicativo |
 | `GET` | `/v1/sessions/operator/active` | Retornar somente sessões ativas do operador autenticado, mesmo após reiniciar a janela |
+| `POST` | `/v1/sessions/{id}/screen-delivery` | Somente o host ativa ou pausa o canal com `{"enabled":true|false}`; ao pausar, apaga o PNG e impede novas publicações até retomar |
 | `POST` | `/v1/sessions/{id}/frame` | Host autorizado publica o último quadro PNG, limitado a 2 MiB |
 | `GET` | `/v1/sessions/{id}/frame` | Operador da sessão autorizada lê o quadro recente, com `Cache-Control: no-store` |
 | `GET` | `/v1/sessions/{id}` | Consultar estado quando autenticado e participante |
@@ -84,6 +85,14 @@ O host Windows agora dispõe de `Iniciar quadros (~1 FPS)` e `Parar quadros`. Es
 O operador autenticado pode iniciar `Atualizar automaticamente (~1 FPS)` ou parar a atualização. Falta de quadro novo limpa a imagem exibida; falha de autenticação ou conexão interrompe o modo de visualização. Cada solicitação consulta novamente as permissões no backend.
 
 Isto é uma **sequência de PNGs estáticos**, não uma sessão de vídeo codificada (H.264/AV1), não usa bitrate adaptativo nem oferece latência de controle profissional. O fluxo de teste em dois computadores exige servidor intermediário HTTPS em VPN, ainda **sem E2EE**. Não há execução independente da janela Tauri, serviço privilegiado, gravação em disco, controle de mouse/teclado ou instalação de host permanente.
+
+## Parada imediata do compartilhamento
+
+O host pode clicar em **Parar quadros** ou **Parar compartilhamento agora**. O desktop interrompe imediatamente a captura local e envia uma solicitação nativa assinada `POST /v1/sessions/{id}/screen-delivery` com `{"enabled":false}`. O servidor verifica **identidade do host**, sessão ativa, consentimento para `screen`, suspende novas leituras/publicações de pixels e elimina o quadro anterior do cache sob a mesma trava da sessão. Um envio que terminar após a parada será negado; um envio concluído antes dela será eliminado.
+
+Retomar os quadros ou compartilhar outro quadro exige uma **nova ação explícita do host**, que solicita `{"enabled":true}`. O operador não pode reativar a entrega nem controlar a captura por API. A autorização original da sessão continua existindo até ser encerrada ou revogada; pausar a imagem não concede outras capacidades.
+
+Se o servidor estiver offline, o aplicativo interrompe imediatamente a captura local, mas não consegue confirmar a limpeza remota: a imagem já enviada expira pelo limite de 15 segundos do cache e a interface deve comunicar essa incerteza. A saída brusca do processo também impede novos quadros, embora não seja garantia de uma solicitação de parada concluída.
 
 ## Convites de suporte
 

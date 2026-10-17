@@ -133,6 +133,7 @@ pub fn run() {
             session_api::list_active_operator_sessions,
             session_api::decide_session,
             session_api::session_status,
+            session_api::set_screen_delivery,
             session_api::publish_manual_screen_frame,
             session_api::fetch_authorized_screen_frame,
             session_api::end_session
