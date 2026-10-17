@@ -549,6 +549,9 @@ async fn enqueue_input(
     queues.retain(|_, queue| {
         queue.events.retain(|(at, _)| now.saturating_sub(*at) <= INPUT_EVENT_TTL_MS);
         !queue.events.is_empty()
+            || queue
+                .last_accepted_ms
+                .is_some_and(|at| now.saturating_sub(at) <= INPUT_EVENT_TTL_MS)
     });
     if !queues.contains_key(&session_id) && queues.len() >= MAX_INPUT_SESSIONS {
         return Err(ApiError::RateLimited);
@@ -583,8 +586,8 @@ async fn dequeue_input(
     authorized_input_peer(machine, host, false, now)?;
     let mut queues = state.input_queues.lock().map_err(|_| ApiError::Unavailable)?;
     let mut batch = Vec::new();
-    if let Some(queue) = queues.remove(&session_id) {
-        for (at, event) in queue.events {
+    if let Some(queue) = queues.get_mut(&session_id) {
+        while let Some((at, event)) = queue.events.pop_front() {
             if now.saturating_sub(at) <= INPUT_EVENT_TTL_MS {
                 batch.push(event);
             }
