@@ -1014,7 +1014,12 @@ mod tests {
 
         let unsigned = service
             .clone()
-            .oneshot(Request::builder().uri(listing_path).body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri(listing_path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(unsigned.status(), StatusCode::UNAUTHORIZED);
