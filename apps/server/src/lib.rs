@@ -26,11 +26,12 @@ use tower_http::cors::CorsLayer;
 use uuid::Uuid;
 
 const MAX_INVITATION_MS: u64 = 5 * 60 * 1_000;
+const PRESENCE_TTL_MS: u64 = 90_000;
 const MAX_PAYLOAD_SIZE: usize = 64 * 1_024;
 
 #[derive(Default)]
 pub struct AppState {
-    devices: RwLock<BTreeSet<Uuid>>,
+    devices: RwLock<HashMap<DeviceId, u64>>,
     sessions: Mutex<HashMap<SessionId, SessionMachine>>,
     nonce_window: NonceWindow,
 }
@@ -101,7 +102,10 @@ fn authenticated(
 
 fn known(state: &AppState, device: DeviceId) -> Result<(), ApiError> {
     let devices = state.devices.read().map_err(|_| ApiError::Unavailable)?;
-    if devices.contains(&device.0) {
+    if devices
+        .get(&device)
+        .is_some_and(|expires_at| *expires_at > now_ms())
+    {
         Ok(())
     } else {
         Err(ApiError::Unauthorized)
@@ -140,14 +144,69 @@ async fn register(
         return Err(ApiError::Invalid);
     }
     let device = authenticated(&state, &headers, "POST", "/v1/devices", &body)?;
-    state
-        .devices
-        .write()
-        .map_err(|_| ApiError::Unavailable)?
-        .insert(device.0);
+    let now = now_ms();
+    let mut devices = state.devices.write().map_err(|_| ApiError::Unavailable)?;
+    // Keep only recently authenticated devices in the development registry.
+    devices.retain(|_, expires_at| *expires_at > now);
+    devices.insert(device, now.saturating_add(PRESENCE_TTL_MS));
     Ok(Json(Registered {
         device_id: device,
         status: "registered",
+    }))
+}
+
+#[derive(Serialize)]
+struct PresenceStatus {
+    device_id: DeviceId,
+    online: bool,
+}
+
+/// Only a currently registered device can refresh its own presence.
+/// An expired device must re-register with a fresh signed proof.
+async fn heartbeat(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<PresenceStatus>, ApiError> {
+    if body.as_ref() != b"{}" {
+        return Err(ApiError::Invalid);
+    }
+    let actor = authenticated(&state, &headers, "POST", "/v1/devices/heartbeat", &body)?;
+    let now = now_ms();
+    let mut devices = state.devices.write().map_err(|_| ApiError::Unavailable)?;
+    if devices
+        .get(&actor)
+        .is_none_or(|expires_at| *expires_at <= now)
+    {
+        return Err(ApiError::Unauthorized);
+    }
+    devices.insert(actor, now.saturating_add(PRESENCE_TTL_MS));
+    Ok(Json(PresenceStatus {
+        device_id: actor,
+        online: true,
+    }))
+}
+
+/// Authenticated viewers can check a target's recent presence without listing
+/// every registered device or learning whether an unknown ID ever existed.
+async fn presence(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<PresenceStatus>, ApiError> {
+    let path = format!("/v1/devices/{id}/presence");
+    let actor = authenticated(&state, &headers, "GET", &path, &[])?;
+    known(&state, actor)?;
+    let device = DeviceId(id);
+    let online = state
+        .devices
+        .read()
+        .map_err(|_| ApiError::Unavailable)?
+        .get(&device)
+        .is_some_and(|expires_at| *expires_at > now_ms());
+    Ok(Json(PresenceStatus {
+        device_id: device,
+        online,
     }))
 }
 
@@ -368,6 +427,8 @@ pub fn router(state: Arc<AppState>) -> Router {
             ),
         )
         .route("/v1/devices", post(register))
+        .route("/v1/devices/heartbeat", post(heartbeat))
+        .route("/v1/devices/{id}/presence", get(presence))
         .route("/v1/sessions", post(create_session))
         .route("/v1/sessions/inbox", get(pending_invitations))
         .route("/v1/sessions/{id}", get(get_session).delete(terminate))
@@ -720,6 +781,143 @@ mod tests {
                 .state(),
             SessionState::Ended
         ));
+    }
+
+    #[tokio::test]
+    async fn signed_presence_expires_and_blocks_invitation_to_offline_host() {
+        let state = Arc::new(AppState::default());
+        let service = router(state.clone());
+        let operator = SigningKey::from_bytes(&[31_u8; 32]);
+        let host = SigningKey::from_bytes(&[32_u8; 32]);
+
+        for key in [&operator, &host] {
+            let result = service
+                .clone()
+                .oneshot(signed_request(key, "POST", "/v1/devices", b"{}".to_vec()))
+                .await
+                .unwrap();
+            assert_eq!(result.status(), StatusCode::OK);
+        }
+
+        let host_id = device_id(&host.verifying_key());
+        let url = format!("/v1/devices/{}/presence", host_id.0);
+        let response = service
+            .clone()
+            .oneshot(signed_request(&operator, "GET", &url, Vec::new()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE)
+            .await
+            .unwrap();
+        let presence: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(presence["online"], true);
+
+        let heartbeat = service
+            .clone()
+            .oneshot(signed_request(
+                &host,
+                "POST",
+                "/v1/devices/heartbeat",
+                b"{}".to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(heartbeat.status(), StatusCode::OK);
+
+        // Simulate the presence TTL expiring without sleeping in the test.
+        state.devices.write().unwrap().insert(host_id, 0);
+        let response = service
+            .clone()
+            .oneshot(signed_request(&operator, "GET", &url, Vec::new()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE)
+            .await
+            .unwrap();
+        let presence: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(presence["online"], false);
+
+        let invite = SessionRequest {
+            protocol_version: seven_protocol::PROTOCOL_VERSION,
+            session_id: SessionId(Uuid::new_v4()),
+            operator: device_id(&operator.verifying_key()),
+            host: host_id,
+            requested: BTreeSet::from([Capability::Screen]),
+            expires_at_ms: now_ms() + 30_000,
+        };
+        let response = service
+            .clone()
+            .oneshot(signed_request(
+                &operator,
+                "POST",
+                "/v1/sessions",
+                serde_json::to_vec(&invite).unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let stale_heartbeat = service
+            .clone()
+            .oneshot(signed_request(
+                &host,
+                "POST",
+                "/v1/devices/heartbeat",
+                b"{}".to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(stale_heartbeat.status(), StatusCode::UNAUTHORIZED);
+
+        let registered_again = service
+            .clone()
+            .oneshot(signed_request(&host, "POST", "/v1/devices", b"{}".to_vec()))
+            .await
+            .unwrap();
+        assert_eq!(registered_again.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn presence_rejects_unsigned_and_unregistered_callers() {
+        let service = router(Arc::new(AppState::default()));
+        let key = SigningKey::from_bytes(&[33_u8; 32]);
+        let target = DeviceId(Uuid::new_v4());
+        let url = format!("/v1/devices/{}/presence", target.0);
+
+        let unsigned = service
+            .clone()
+            .oneshot(Request::builder().uri(&url).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(unsigned.status(), StatusCode::UNAUTHORIZED);
+
+        let unknown = service
+            .clone()
+            .oneshot(signed_request(&key, "GET", &url, Vec::new()))
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::UNAUTHORIZED);
+
+        let response = service
+            .clone()
+            .oneshot(signed_request(&key, "POST", "/v1/devices", b"{}".to_vec()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = service
+            .clone()
+            .oneshot(signed_request(&key, "GET", &url, Vec::new()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["online"], false);
     }
 
     #[tokio::test]
