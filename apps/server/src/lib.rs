@@ -9,7 +9,7 @@ use axum::{
     body::Bytes,
     extract::DefaultBodyLimit,
     extract::{Path, State},
-    http::{header, HeaderMap, HeaderValue, Method, StatusCode},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -80,11 +80,12 @@ fn authenticated(
     path: &str,
     body: &[u8],
 ) -> Result<DeviceId, ApiError> {
-    let max_body = if method == "POST" && path.starts_with("/v1/sessions/") && path.ends_with("/frame") {
-        MAX_FRAME_BYTES
-    } else {
-        MAX_PAYLOAD_SIZE
-    };
+    let max_body =
+        if method == "POST" && path.starts_with("/v1/sessions/") && path.ends_with("/frame") {
+            MAX_FRAME_BYTES
+        } else {
+            MAX_PAYLOAD_SIZE
+        };
     if body.len() > max_body {
         return Err(ApiError::Invalid);
     }
@@ -349,7 +350,9 @@ fn valid_png_header(png: &[u8]) -> bool {
     if png.len() < 33 || png.len() > MAX_FRAME_BYTES || !png.starts_with(b"\x89PNG\r\n\x1a\n") {
         return false;
     }
-    if &png[12..16] != b"IHDR" || u32::from_be_bytes(png[8..12].try_into().unwrap_or_default()) != 13 {
+    if &png[12..16] != b"IHDR"
+        || u32::from_be_bytes(png[8..12].try_into().unwrap_or_default()) != 13
+    {
         return false;
     }
     let width = u32::from_be_bytes(png[16..20].try_into().unwrap_or_default());
@@ -400,10 +403,13 @@ async fn publish_frame(
     if !frames.contains_key(&SessionId(id)) && frames.len() >= MAX_CACHED_FRAMES {
         return Err(ApiError::Unavailable);
     }
-    frames.insert(SessionId(id), StoredFrame {
-        png: body.to_vec(),
-        received_at_ms: now,
-    });
+    frames.insert(
+        SessionId(id),
+        StoredFrame {
+            png: body.to_vec(),
+            received_at_ms: now,
+        },
+    );
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -425,9 +431,13 @@ async fn read_frame(
         return Err(ApiError::NotFound);
     }
     Ok((
-        [(header::CONTENT_TYPE, "image/png"), (header::CACHE_CONTROL, "no-store")],
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
         frame.png.clone(),
-    ).into_response())
+    )
+        .into_response())
 }
 
 #[derive(Deserialize)]
@@ -573,8 +583,12 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/sessions", post(create_session))
         .route("/v1/sessions/inbox", get(pending_invitations))
         .route("/v1/sessions/host/active", get(active_authorizations))
-        .route("/v1/sessions/{id}/frame",
-            get(read_frame).post(publish_frame).layer(DefaultBodyLimit::max(MAX_FRAME_BYTES)))
+        .route(
+            "/v1/sessions/{id}/frame",
+            get(read_frame)
+                .post(publish_frame)
+                .layer(DefaultBodyLimit::max(MAX_FRAME_BYTES)),
+        )
         .route("/v1/sessions/{id}", get(get_session).delete(terminate))
         .route("/v1/sessions/{id}/decision", post(decide))
         .route("/v1/sessions/{id}/revoke", post(revoke))
@@ -1185,9 +1199,11 @@ mod tests {
         let host = SigningKey::from_bytes(&[62_u8; 32]);
         let outsider = SigningKey::from_bytes(&[63_u8; 32]);
         for key in [&operator, &host, &outsider] {
-            let response = service.clone().oneshot(
-                signed_request(key, "POST", "/v1/devices", b"{}".to_vec())
-            ).await.unwrap();
+            let response = service
+                .clone()
+                .oneshot(signed_request(key, "POST", "/v1/devices", b"{}".to_vec()))
+                .await
+                .unwrap();
             assert_eq!(response.status(), StatusCode::OK);
         }
 
@@ -1200,9 +1216,16 @@ mod tests {
             requested: BTreeSet::from([Capability::Screen]),
             expires_at_ms: now_ms() + 30_000,
         };
-        let response = service.clone().oneshot(signed_request(
-            &operator, "POST", "/v1/sessions", serde_json::to_vec(&invitation).unwrap()
-        )).await.unwrap();
+        let response = service
+            .clone()
+            .oneshot(signed_request(
+                &operator,
+                "POST",
+                "/v1/sessions",
+                serde_json::to_vec(&invitation).unwrap(),
+            ))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::CREATED);
         let path = format!("/v1/sessions/{}/frame", id.0);
 
@@ -1214,60 +1237,89 @@ mod tests {
         png[20..24].copy_from_slice(&1u32.to_be_bytes());
 
         // Never accept a frame before explicit host consent.
-        let denied = service.clone().oneshot(
-            signed_request(&host, "POST", &path, png.clone())
-        ).await.unwrap();
+        let denied = service
+            .clone()
+            .oneshot(signed_request(&host, "POST", &path, png.clone()))
+            .await
+            .unwrap();
         assert_eq!(denied.status(), StatusCode::FORBIDDEN);
         let approval_path = format!("/v1/sessions/{}/decision", id.0);
-        let approved = service.clone().oneshot(signed_request(
-            &host, "POST", &approval_path,
-            br#"{"approve":true,"granted":["screen"]}"#.to_vec()
-        )).await.unwrap();
+        let approved = service
+            .clone()
+            .oneshot(signed_request(
+                &host,
+                "POST",
+                &approval_path,
+                br#"{"approve":true,"granted":["screen"]}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
         assert_eq!(approved.status(), StatusCode::OK);
 
         // Only the host can publish; only the operator can read.
         for bad in [&operator, &outsider] {
-            let response = service.clone().oneshot(
-                signed_request(bad, "POST", &path, png.clone())
-            ).await.unwrap();
+            let response = service
+                .clone()
+                .oneshot(signed_request(bad, "POST", &path, png.clone()))
+                .await
+                .unwrap();
             assert_eq!(response.status(), StatusCode::FORBIDDEN);
         }
-        let malformed = service.clone().oneshot(
-            signed_request(&host, "POST", &path, b"fake-png".to_vec())
-        ).await.unwrap();
+        let malformed = service
+            .clone()
+            .oneshot(signed_request(&host, "POST", &path, b"fake-png".to_vec()))
+            .await
+            .unwrap();
         assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
-        let uploaded = service.clone().oneshot(
-            signed_request(&host, "POST", &path, png.clone())
-        ).await.unwrap();
+        let uploaded = service
+            .clone()
+            .oneshot(signed_request(&host, "POST", &path, png.clone()))
+            .await
+            .unwrap();
         assert_eq!(uploaded.status(), StatusCode::NO_CONTENT);
 
         for bad in [&host, &outsider] {
-            let response = service.clone().oneshot(
-                signed_request(bad, "GET", &path, vec![])
-            ).await.unwrap();
+            let response = service
+                .clone()
+                .oneshot(signed_request(bad, "GET", &path, vec![]))
+                .await
+                .unwrap();
             assert_eq!(response.status(), StatusCode::FORBIDDEN);
         }
-        let fetched = service.clone().oneshot(
-            signed_request(&operator, "GET", &path, vec![])
-        ).await.unwrap();
+        let fetched = service
+            .clone()
+            .oneshot(signed_request(&operator, "GET", &path, vec![]))
+            .await
+            .unwrap();
         assert_eq!(fetched.status(), StatusCode::OK);
         assert_eq!(fetched.headers()[header::CONTENT_TYPE], "image/png");
         assert_eq!(fetched.headers()[header::CACHE_CONTROL], "no-store");
-        assert_eq!(to_bytes(fetched.into_body(), MAX_FRAME_BYTES).await.unwrap().as_ref(), png);
+        assert_eq!(
+            to_bytes(fetched.into_body(), MAX_FRAME_BYTES)
+                .await
+                .unwrap()
+                .as_ref(),
+            png
+        );
 
         let revoke_path = format!("/v1/sessions/{}/revoke", id.0);
-        let revoked = service.clone().oneshot(signed_request(
-            &host, "POST", &revoke_path,
-            br#"{"capability":"screen"}"#.to_vec()
-        )).await.unwrap();
+        let revoked = service
+            .clone()
+            .oneshot(signed_request(
+                &host,
+                "POST",
+                &revoke_path,
+                br#"{"capability":"screen"}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
         assert_eq!(revoked.status(), StatusCode::OK);
-        for (key, method, body) in [
-            (&host, "POST", png.clone()),
-            (&operator, "GET", vec![]),
-        ] {
-            let response = service.clone().oneshot(
-                signed_request(key, method, &path, body)
-            ).await.unwrap();
+        for (key, method, body) in [(&host, "POST", png.clone()), (&operator, "GET", vec![])] {
+            let response = service
+                .clone()
+                .oneshot(signed_request(key, method, &path, body))
+                .await
+                .unwrap();
             assert_eq!(response.status(), StatusCode::FORBIDDEN);
         }
     }
