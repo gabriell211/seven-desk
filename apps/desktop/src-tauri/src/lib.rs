@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+mod session_api;
+
 use serde::Serialize;
 use seven_identity::{Identity, SystemKeyStore};
 use std::{
@@ -118,7 +120,12 @@ pub fn run() {
             local_status,
             initialize_identity,
             register_local_device,
-            heartbeat_local_device
+            heartbeat_local_device,
+            session_api::create_session_request,
+            session_api::list_pending_invitations,
+            session_api::decide_session,
+            session_api::session_status,
+            session_api::end_session
         ])
         .run(tauri::generate_context!())
         .expect("unable to start Seven Desk");
