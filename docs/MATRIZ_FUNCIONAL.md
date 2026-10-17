@@ -2,7 +2,7 @@
 
 **Base:** levantamento funcional orientado a produto de suporte remoto profissional e revisão de escopo em 16/10/2026.
 
-**Legenda:** todos os itens abaixo estão em **Planejado**, não implementado. "1.0" indica a fase-alvo de backlog; **não equivale à garantia de entrega**. P5 significa fase posterior. Nenhuma funcionalidade de terceiros deve ser copiada literalmente em marca, texto ou identidade.
+**Legenda:** a tabela registra o **escopo-alvo** e suas fases, não o estado executável de cada item. Consulte [IMPLEMENTACAO.md](IMPLEMENTACAO.md) para o estado comprovado; partes de tela, mouse e teclado existem em pré-alfa, mas a maioria das capacidades segue planejada. "1.0" indica a fase-alvo de backlog; **não equivale à garantia de entrega**. P5 significa fase posterior. Nenhuma funcionalidade de terceiros deve ser copiada literalmente em marca, texto ou identidade.
 
 | Domínio | Capacidade | Issues | Fase-alvo |
 | --- | --- | --- | --- |

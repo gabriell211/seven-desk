@@ -90,7 +90,15 @@ A documentação experimental dos endpoints está em [API_DESENVOLVIMENTO.md](AP
 - [PR #91](https://github.com/gabriell211/seven-desk/pull/91) **merged, CI 6/6**: contrato normalizado de eventos de mouse, fila assinada operador→host, rate-limit, TTL curto, isolamento por papel/permissão e descarte imediato ao revogar ou pausar.
 - [PR #92](https://github.com/gabriell211/seven-desk/pull/92) **merged, CI 6/6**: Tauri Windows aplica mouse via Enigo ao monitor principal somente após permissão `input` escolhida pelo host e habilitação local explícita. Interface envia movimento e clique com controle de taxa; host pode parar mouse e compartilhamento a qualquer momento.
 
-**Estado:** há um caminho completo de código para eventos de mouse entre dois clientes autenticados via servidor HTTPS de laboratório, mas **não existe homologação prática em dois equipamentos Windows** e o backend ainda não implementa E2EE, buffer eficiente de vídeo nem serviço host permanente. O protocolo de teclado/atalhos, monitores secundários, arraste, proteção contra desktop elevado, benchmarks e suporte multiplataforma ainda são pendências. O mouse não habilita acesso não assistido.
+**Estado:** há caminhos experimentais de código para mouse e teclado básico entre dois clientes autenticados via servidor HTTPS de laboratório, mas **não existe homologação prática em dois equipamentos Windows** e o backend ainda não implementa E2EE, buffer eficiente de vídeo nem serviço host permanente. Atalhos/modificadores, validação de layouts regionais, monitores secundários, arraste, proteção contra desktop elevado, benchmarks e suporte multiplataforma ainda são pendências. A entrada não habilita acesso não assistido.
+
+## Teclado básico consentido e correção da assinatura de quadros — 17/10/2026
+
+- O protocolo separa `keyboard` de `input` (mouse). O operador solicita cada permissão, o host escolhe quais conceder e ativa a injeção local de teclado com uma ação adicional durante o compartilhamento de tela. Pausa, revogação, janela oculta e término interrompem a entrada. O conjunto de teclas é limitado a caracteres, edição e navegação sem modificadores ou atalhos.
+- O servidor mantém uma fila temporária e limitada de teclado, isolada por sessão. Eventos exigem assinatura, identidade de participante, permissão vigente e entrega de tela ativa. Pausa, revogação e término limpam a fila.
+- A assinatura de requisições agora aceita o mesmo limite de 2 MiB do endpoint PNG. Antes, o limite de 64 KiB na camada de assinatura impedia o envio da maioria dos quadros reais. Um teste de API exercita publicação e leitura de quadro assinado acima de 64 KiB.
+
+As verificações locais com Rust 1.90 passaram: formatação, Clippy sem avisos e 33 testes do workspace, incluindo permissão/revogação de teclado e quadro assinado acima de 64 KiB. O build TypeScript/Vite também passou. **Ainda faltam compilação nativa Tauri final, E2E em duas máquinas, testes de layout do teclado, avaliação de segurança e vídeo de baixa latência**; isso não representa paridade com o AnyDesk nem autorização para release de produção.
 
 ## O que ainda bloqueia uso real
 

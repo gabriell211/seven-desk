@@ -28,8 +28,19 @@
     "active": true,
     "targets": "all",
     "icon": ["icons/icon.png", "icons/icon.ico", "icons/icon.icns"],
-    "shortDescription": "Seven Desk - acesso remoto seguro",
+    "publisher": "Seven Desk Project",
+    "homepage": "https://github.com/gabriell211/seven-desk",
+    "shortDescription": "Seven Desk - acesso remoto experimental",
+    "longDescription": "Aplicativo em desenvolvimento para acesso remoto com autorização explícita do dispositivo atendido.",
     "category": "Utility",
-    "windows": { "nsis": { "displayLanguageSelector": false } }
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["PortugueseBR", "English"],
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico"
+      }
+    }
   }
 }

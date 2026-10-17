@@ -1,8 +1,14 @@
-import { writeFile, mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { deflateSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 
+// The native counterpart of public/brand-mark.svg. Keep the tile bounds,
+// seven polygon, and gradient stops in sync with the vector artwork.
 const output = fileURLToPath(new URL("../apps/desktop/src-tauri/icons/", import.meta.url));
+const seven = [
+  [0.28, 0.295], [0.755, 0.295], [0.755, 0.405],
+  [0.49, 0.735], [0.36, 0.735], [0.63, 0.405], [0.28, 0.405],
+];
 
 function crc32(data) {
   let crc = 0xffffffff;
@@ -15,8 +21,7 @@ function crc32(data) {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-function chunk(name, contents) {
-  const payload = Buffer.from(contents);
+function chunk(name, payload) {
   const length = Buffer.alloc(4);
   length.writeUInt32BE(payload.length);
   const kind = Buffer.from(name);
@@ -25,97 +30,116 @@ function chunk(name, contents) {
   return Buffer.concat([length, kind, payload, checksum]);
 }
 
-function insideRoundedSquare(x, y) {
-  if (x < 0.08 || x > 0.92 || y < 0.08 || y > 0.92) return false;
-  const r = 0.19;
-  const dx = Math.max(0.08 + r - x, 0, x - (0.92 - r));
-  const dy = Math.max(0.08 + r - y, 0, y - (0.92 - r));
-  return dx * dx + dy * dy <= r * r;
+function inTile(x, y) {
+  const left = 0.055;
+  const top = 0.055;
+  const right = 0.945;
+  const bottom = 0.945;
+  const radius = 0.23;
+  const nearestX = Math.max(left + radius, Math.min(x, right - radius));
+  const nearestY = Math.max(top + radius, Math.min(y, bottom - radius));
+  const dx = x - nearestX;
+  const dy = y - nearestY;
+  return dx * dx + dy * dy <= radius * radius;
 }
 
-function insideSeven(x, y) {
-  // A bold, slanted 7 with a clean top bar and diagonal stem.
-  const topBar = x >= 0.27 && x <= 0.75 && y >= 0.285 && y <= 0.375;
-  const slantPosition = 0.71 - (y - 0.375) * 0.54;
-  const stem = y >= 0.375 && y <= 0.77 && Math.abs(x - slantPosition) < 0.051;
-  return topBar || stem;
+function inSeven(x, y) {
+  let inside = false;
+  for (let i = 0, j = seven.length - 1; i < seven.length; j = i++) {
+    const [xi, yi] = seven[i];
+    const [xj, yj] = seven[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
 }
 
 function createPng(size) {
-  const rows = Buffer.alloc(size * (1 + size * 4));
+  const stride = 1 + size * 4;
+  const rows = Buffer.alloc(size * stride);
+  const samples = size <= 32 ? 6 : 4;
+  const sampleCount = samples * samples;
   for (let y = 0; y < size; y++) {
-    const row = y * (size * 4 + 1);
-    rows[row] = 0;
+    const row = y * stride;
     for (let x = 0; x < size; x++) {
-      const p = row + 1 + x * 4;
-      const px = (x + 0.5) / size;
-      const py = (y + 0.5) / size;
-      let squareCoverage = 0;
-      let glyphCoverage = 0;
-      for (let sampleY = 0; sampleY < 2; sampleY++) {
-        for (let sampleX = 0; sampleX < 2; sampleX++) {
-          const sx = (x + (sampleX + 0.5) / 2) / size;
-          const sy = (y + (sampleY + 0.5) / 2) / size;
-          if (insideRoundedSquare(sx, sy)) squareCoverage++;
-          if (insideSeven(sx, sy)) glyphCoverage++;
+      let tileCoverage = 0;
+      let sevenCoverage = 0;
+      for (let sy = 0; sy < samples; sy++) {
+        for (let sx = 0; sx < samples; sx++) {
+          const px = (x + (sx + 0.5) / samples) / size;
+          const py = (y + (sy + 0.5) / samples) / size;
+          if (inTile(px, py)) {
+            tileCoverage++;
+            if (inSeven(px, py)) sevenCoverage++;
+          }
         }
       }
-      const alpha = Math.round(squareCoverage * 255 / 4);
-      const f = Math.min(1, glyphCoverage / 4);
-      const glow = (px + py) / 2;
-      const background = [Math.round(76 + glow * 40), Math.round(105 - glow * 7), 245];
-      rows[p] = Math.round(background[0] * (1 - f) + 255 * f);
-      rows[p + 1] = Math.round(background[1] * (1 - f) + 255 * f);
-      rows[p + 2] = Math.round(background[2] * (1 - f) + 255 * f);
-      rows[p + 3] = alpha;
+      const offset = row + 1 + x * 4;
+      if (tileCoverage === 0) continue;
+      const gradient = Math.max(0, Math.min(1, ((x + y + 1) / size) / 2));
+      const white = sevenCoverage / tileCoverage;
+      const red = 76 + (119 - 76) * gradient;
+      const green = 116 + (66 - 116) * gradient;
+      const blue = 255 + (239 - 255) * gradient;
+      rows[offset] = Math.round(red * (1 - white) + 255 * white);
+      rows[offset + 1] = Math.round(green * (1 - white) + 255 * white);
+      rows[offset + 2] = Math.round(blue * (1 - white) + 255 * white);
+      rows[offset + 3] = Math.round((tileCoverage / sampleCount) * 255);
     }
   }
+
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(size, 0);
   ihdr.writeUInt32BE(size, 4);
-  ihdr[8] = 8;
+  ihdr[8] = 8; // RGBA, eight bits per channel.
   ihdr[9] = 6;
   return Buffer.concat([
-    Buffer.from([137,80,78,71,13,10,26,10]),
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
     chunk("IHDR", ihdr),
     chunk("IDAT", deflateSync(rows, { level: 9 })),
     chunk("IEND", Buffer.alloc(0)),
   ]);
 }
 
-function createIco(png) {
-  const header = Buffer.alloc(22);
-  header.writeUInt16LE(1, 2); // icon
-  header.writeUInt16LE(1, 4); // one image
-  header[6] = 0; // 256x256 (0 is ICO's representation of 256)
-  header[7] = 0;
-  header.writeUInt16LE(1, 10);
-  header.writeUInt16LE(32, 12);
-  header.writeUInt32LE(png.length, 14);
-  header.writeUInt32LE(22, 18);
-  return Buffer.concat([header, png]);
+function createIco(images) {
+  const header = Buffer.alloc(6 + images.length * 16);
+  header.writeUInt16LE(1, 2);
+  header.writeUInt16LE(images.length, 4);
+  let offset = header.length;
+  for (const [index, [size, png]] of images.entries()) {
+    const entry = 6 + index * 16;
+    header[entry] = size === 256 ? 0 : size;
+    header[entry + 1] = size === 256 ? 0 : size;
+    header.writeUInt16LE(1, entry + 4);
+    header.writeUInt16LE(32, entry + 6);
+    header.writeUInt32LE(png.length, entry + 8);
+    header.writeUInt32LE(offset, entry + 12);
+    offset += png.length;
+  }
+  return Buffer.concat([header, ...images.map(([, png]) => png)]);
 }
 
-function createIcns(png256, png512) {
-  const record = (type, png) => {
-    const h = Buffer.alloc(8);
-    h.write(type, 0, "ascii");
-    h.writeUInt32BE(8 + png.length, 4);
-    return Buffer.concat([h, png]);
-  };
-  const records = Buffer.concat([record("ic08", png256), record("ic09", png512)]);
+function createIcns(images) {
+  const types = new Map([[16, "icp4"], [32, "icp5"], [64, "icp6"], [128, "ic07"], [256, "ic08"], [512, "ic09"]]);
+  const records = images.map(([size, png]) => {
+    const header = Buffer.alloc(8);
+    header.write(types.get(size), 0, "ascii");
+    header.writeUInt32BE(png.length + 8, 4);
+    return Buffer.concat([header, png]);
+  });
   const header = Buffer.alloc(8);
   header.write("icns");
-  header.writeUInt32BE(8 + records.length, 4);
-  return Buffer.concat([header, records]);
+  header.writeUInt32BE(8 + records.reduce((total, record) => total + record.length, 0), 4);
+  return Buffer.concat([header, ...records]);
 }
 
 await mkdir(output, { recursive: true });
-const p256 = createPng(256);
-const p512 = createPng(512);
+const sizes = [16, 24, 32, 48, 64, 128, 256, 512];
+const pngs = new Map(sizes.map((size) => [size, createPng(size)]));
 await Promise.all([
-  writeFile(output + "icon.png", p512),
-  writeFile(output + "icon.ico", createIco(p256)),
-  writeFile(output + "icon.icns", createIcns(p256, p512)),
+  writeFile(output + "icon.png", pngs.get(512)),
+  writeFile(output + "icon.ico", createIco([16, 24, 32, 48, 64, 128, 256].map((size) => [size, pngs.get(size)]))),
+  writeFile(output + "icon.icns", createIcns([16, 32, 64, 128, 256, 512].map((size) => [size, pngs.get(size)]))),
 ]);
 process.stdout.write("Seven Desk native icons generated.\n");

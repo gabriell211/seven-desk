@@ -26,6 +26,7 @@ pub struct SessionId(pub Uuid);
 pub enum Capability {
     Screen,
     Input,
+    Keyboard,
     ClipboardRead,
     ClipboardWrite,
     FileRead,
@@ -69,6 +70,41 @@ impl MouseEvent {
         }
         if let Self::Scroll { steps, .. } = self
             && (steps == 0 || !(-5..=5).contains(&steps))
+        {
+            return Err(ProtocolError::InvalidInputEvent);
+        }
+        Ok(())
+    }
+}
+
+/// A deliberately narrow keyboard surface: one printable character or one
+/// unmodified navigation/editing key per event. Modifiers and shortcuts are
+/// never accepted by the remote protocol.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpecialKey {
+    Backspace,
+    Delete,
+    Enter,
+    Tab,
+    Escape,
+    ArrowLeft,
+    ArrowRight,
+    ArrowUp,
+    ArrowDown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum KeyboardEvent {
+    Character { value: char },
+    Special { key: SpecialKey },
+}
+
+impl KeyboardEvent {
+    pub fn validate(self) -> Result<(), ProtocolError> {
+        if let Self::Character { value } = self
+            && !(value.is_alphanumeric() || value.is_ascii_punctuation() || value == ' ')
         {
             return Err(ProtocolError::InvalidInputEvent);
         }
@@ -431,6 +467,35 @@ mod tests {
         let wire = serde_json::to_vec(&good).unwrap();
         assert_eq!(serde_json::from_slice::<MouseEvent>(&wire).unwrap(), good);
         assert!(serde_json::from_slice::<MouseEvent>(br#"{"type":"key","key":"super"}"#).is_err());
+    }
+
+    #[test]
+    fn keyboard_events_reject_controls_and_shortcuts() {
+        assert!(KeyboardEvent::Character { value: 'á' }.validate().is_ok());
+        assert!(KeyboardEvent::Character { value: ' ' }.validate().is_ok());
+        assert!(
+            KeyboardEvent::Special {
+                key: SpecialKey::Backspace
+            }
+            .validate()
+            .is_ok()
+        );
+        assert_eq!(
+            KeyboardEvent::Character { value: '\n' }.validate(),
+            Err(ProtocolError::InvalidInputEvent)
+        );
+        assert_eq!(
+            KeyboardEvent::Character { value: '\u{202e}' }.validate(),
+            Err(ProtocolError::InvalidInputEvent)
+        );
+        assert!(
+            serde_json::from_slice::<KeyboardEvent>(br#"{"type":"character","value":"ab"}"#)
+                .is_err()
+        );
+        assert!(
+            serde_json::from_slice::<KeyboardEvent>(br#"{"type":"special","key":"control"}"#)
+                .is_err()
+        );
     }
 
     #[test]

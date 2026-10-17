@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 88" role="img" aria-labelledby="title">
+  <title id="title">Seven Desk — acesso remoto</title>
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1" gradientUnits="objectBoundingBox">
+      <stop offset="0" stop-color="#4c74ff"/>
+      <stop offset="1" stop-color="#7742ef"/>
+    </linearGradient>
+  </defs>
+  <rect x="3.52" y="3.52" width="56.96" height="56.96" rx="14.72" fill="url(#tile)" transform="translate(8 11)"/>
+  <path fill="#fff" d="M25.92 33.88h30.4v7.04L39.36 62.04h-8.32l17.28-21.12h-22.4z"/>
+  <text x="87" y="47" fill="#f5f7ff" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="31" font-weight="750" letter-spacing="-0.7">Seven Desk</text>
+  <text x="88" y="67" fill="#b5c2d8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="2.6">ACESSO REMOTO</text>
+</svg>

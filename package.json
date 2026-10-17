@@ -7,6 +7,8 @@
     "desktop:dev": "npm run dev --workspace @seven/desktop",
     "desktop:build": "npm run build --workspace @seven/desktop",
     "desktop:check": "npm run check --workspace @seven/desktop",
+    "installers:hash": "node scripts/hash-installers.mjs",
+    "installers:verify": "node scripts/hash-installers.mjs --verify",
     "tauri:dev": "npm run tauri:dev --workspace @seven/desktop",
     "tauri:build": "npm run tauri:build --workspace @seven/desktop"
   },

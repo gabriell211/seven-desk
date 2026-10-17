@@ -11,7 +11,9 @@ use thiserror::Error;
 use uuid::Uuid;
 
 const MAX_CLOCK_SKEW_MS: u64 = 60_000;
-const MAX_BODY_BYTES: usize = 64 * 1024;
+// A signed PNG frame may be as large as 2 MiB. HTTP handlers still enforce
+// their own, usually much smaller, per-endpoint limits before verification.
+const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct RequestProof {
@@ -164,6 +166,34 @@ mod tests {
         assert_eq!(
             verify(&proof, "GET", "/v1/sessions/two", &[], 1_000, &replay).unwrap_err(),
             AuthError::InvalidSignature
+        );
+    }
+
+    #[test]
+    fn signs_bounded_frame_bodies_but_rejects_larger_payloads() {
+        let key = SigningKey::from_bytes(&[13_u8; 32]);
+        let body = vec![0x5a; 64 * 1024 + 1];
+        let proof = sign(&key, "POST", "/v1/sessions/frame", &body, 1_000);
+        assert!(
+            verify(
+                &proof,
+                "POST",
+                "/v1/sessions/frame",
+                &body,
+                1_000,
+                &NonceWindow::default(),
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            message_to_sign(
+                "POST",
+                "/v1/sessions/frame",
+                &vec![0; MAX_BODY_BYTES + 1],
+                Uuid::new_v4(),
+                1_000
+            ),
+            Err(AuthError::Oversized)
         );
     }
 }

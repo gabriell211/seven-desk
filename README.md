@@ -12,7 +12,7 @@
 </div>
 
 > [!IMPORTANT]
-> **Status: desenvolvimento pré-alfa.** Já existem contratos Rust, identidade assinada, sinalização de sessão, interface Tauri/React e **captura real do monitor principal no Windows com publicação manual ou atualização experimental de até ~1 quadro/segundo**, condicionada a autorização e início voluntário pelo host. Há controle explícito para pausar e encerrar a entrega de tela. **Há controle experimental de mouse no monitor principal Windows**, com consentimento `input` separado, ativação voluntária no host e parada visível; **ainda não há teclado remoto, vídeo profissional, E2EE, serviço host completo nem plataforma homologada em E2E/produção**. A maioria dos recursos continua planejada. Veja [o status técnico](docs/IMPLEMENTACAO.md) e as [issues](https://github.com/gabriell211/seven-desk/issues).
+> **Status: desenvolvimento pré-alfa.** Já existem contratos Rust, identidade assinada, sinalização de sessão, interface Tauri/React e **captura real do monitor principal no Windows com publicação manual ou atualização experimental de até ~1 quadro/segundo**, condicionada a autorização e início voluntário pelo host. Há controle explícito para pausar e encerrar a entrega de tela. **Mouse e teclado básicos experimentais no Windows** exigem permissões separadas, ativação voluntária no host e parada visível. O teclado aceita caracteres e algumas teclas de edição/navegação, sem atalhos. **Ainda não há vídeo profissional, E2EE, serviço host completo nem plataforma homologada em E2E/produção.** A maioria dos recursos continua planejada. Veja [o status técnico](docs/IMPLEMENTACAO.md) e as [issues](https://github.com/gabriell211/seven-desk/issues).
 
 ## Visão geral
 
@@ -114,7 +114,7 @@ A distribuição oficial do aplicativo desktop deverá ser feita pelo **Instalad
 
 **Referências de engenharia:** [pesquisa de repositórios públicos e estratégia dos instaladores](docs/REFERENCIAS_TECNICAS.md).
 
-**Situação atual:** instaladores ainda **não foram implementados**. O requisito está rastreado nas issues [#15](https://github.com/gabriell211/seven-desk/issues/15), [#23](https://github.com/gabriell211/seven-desk/issues/23) e [#38](https://github.com/gabriell211/seven-desk/issues/38). Uma distribuição portátil não faz parte do fluxo de instalação oficial e, se for considerada no futuro, exigirá escopo e aprovação separados.
+**Situação atual:** o Tauri consegue gerar **pacotes de QA não assinados**, com ícone e metadados do Seven Desk, mas os instaladores oficiais ainda **não foram homologados nem assinados**. O requisito está rastreado nas issues [#15](https://github.com/gabriell211/seven-desk/issues/15), [#23](https://github.com/gabriell211/seven-desk/issues/23) e [#38](https://github.com/gabriell211/seven-desk/issues/38). Uma distribuição portátil não faz parte do fluxo de instalação oficial e, se for considerada no futuro, exigirá escopo e aprovação separados.
 
 ## Experiência de usuário (diretrizes)
 

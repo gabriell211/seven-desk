@@ -15,7 +15,8 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use seven_protocol::{
-    Capability, DeviceId, MouseEvent, SessionId, SessionMachine, SessionRequest, SessionState,
+    Capability, DeviceId, KeyboardEvent, MouseEvent, SessionId, SessionMachine, SessionRequest,
+    SessionState,
 };
 use seven_security::{NonceWindow, RequestProof, verify};
 use std::{
@@ -46,6 +47,7 @@ pub struct AppState {
     // Transient pointer events; only the authenticated host consumes these.
     // Never persist user input or allow unattended input injection.
     input_queues: Mutex<HashMap<SessionId, InputQueue>>,
+    keyboard_queues: Mutex<HashMap<SessionId, KeyboardQueue>>,
     nonce_window: NonceWindow,
 }
 
@@ -430,6 +432,11 @@ async fn configure_screen_delivery(
             .lock()
             .map_err(|_| ApiError::Unavailable)?
             .remove(&session_id);
+        state
+            .keyboard_queues
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
+            .remove(&session_id);
     }
     Ok(Json(ScreenDeliveryResponse {
         enabled: input.enabled,
@@ -509,10 +516,17 @@ struct InputQueue {
     last_accepted_ms: Option<u64>,
 }
 
+#[derive(Default)]
+struct KeyboardQueue {
+    events: VecDeque<(u64, KeyboardEvent)>,
+    last_accepted_ms: Option<u64>,
+}
+
 fn authorized_input_peer(
     machine: &mut SessionMachine,
     actor: DeviceId,
     send: bool,
+    capability: Capability,
     now: u64,
 ) -> Result<(), ApiError> {
     machine.expire(now);
@@ -520,7 +534,7 @@ fn authorized_input_peer(
     if (send && actor != operator) || (!send && actor != host) {
         return Err(ApiError::Forbidden);
     }
-    if !machine.permits(Capability::Input, now) || !machine.permits_screen_delivery(now) {
+    if !machine.permits(capability, now) || !machine.permits_screen_delivery(now) {
         return Err(ApiError::Forbidden);
     }
     Ok(())
@@ -544,7 +558,7 @@ async fn enqueue_input(
     let session_id = SessionId(id);
     let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
     let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
-    authorized_input_peer(machine, operator, true, now)?;
+    authorized_input_peer(machine, operator, true, Capability::Input, now)?;
     let mut queues = state
         .input_queues
         .lock()
@@ -588,9 +602,84 @@ async fn dequeue_input(
     let session_id = SessionId(id);
     let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
     let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
-    authorized_input_peer(machine, host, false, now)?;
+    authorized_input_peer(machine, host, false, Capability::Input, now)?;
     let mut queues = state
         .input_queues
+        .lock()
+        .map_err(|_| ApiError::Unavailable)?;
+    let mut batch = Vec::new();
+    if let Some(queue) = queues.get_mut(&session_id) {
+        while let Some((at, event)) = queue.events.pop_front() {
+            if now.saturating_sub(at) <= INPUT_EVENT_TTL_MS {
+                batch.push(event);
+            }
+        }
+    }
+    Ok(Json(batch))
+}
+
+/// Keyboard uses an independent grant and queue. Only unmodified, bounded
+/// events can cross this relay; the host must still activate native injection.
+async fn enqueue_keyboard(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<StatusCode, ApiError> {
+    let path = format!("/v1/sessions/{id}/keyboard");
+    let operator = authenticated(&state, &headers, "POST", &path, &body)?;
+    known(&state, operator)?;
+    let event: KeyboardEvent = serde_json::from_slice(&body).map_err(|_| ApiError::Invalid)?;
+    event.validate().map_err(|_| ApiError::Invalid)?;
+    let now = now_ms();
+    let session_id = SessionId(id);
+    let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
+    let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
+    authorized_input_peer(machine, operator, true, Capability::Keyboard, now)?;
+    let mut queues = state
+        .keyboard_queues
+        .lock()
+        .map_err(|_| ApiError::Unavailable)?;
+    queues.retain(|_, queue| {
+        queue
+            .events
+            .retain(|(at, _)| now.saturating_sub(*at) <= INPUT_EVENT_TTL_MS);
+        !queue.events.is_empty()
+            || queue
+                .last_accepted_ms
+                .is_some_and(|at| now.saturating_sub(at) <= INPUT_EVENT_TTL_MS)
+    });
+    if !queues.contains_key(&session_id) && queues.len() >= MAX_INPUT_SESSIONS {
+        return Err(ApiError::RateLimited);
+    }
+    let queue = queues.entry(session_id).or_default();
+    if queue
+        .last_accepted_ms
+        .is_some_and(|last| now.saturating_sub(last) < MIN_INPUT_INTERVAL_MS)
+        || queue.events.len() >= MAX_INPUT_QUEUE
+    {
+        return Err(ApiError::RateLimited);
+    }
+    queue.events.push_back((now, event));
+    queue.last_accepted_ms = Some(now);
+    Ok(StatusCode::ACCEPTED)
+}
+
+async fn dequeue_keyboard(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<KeyboardEvent>>, ApiError> {
+    let path = format!("/v1/sessions/{id}/keyboard");
+    let host = authenticated(&state, &headers, "GET", &path, &[])?;
+    known(&state, host)?;
+    let now = now_ms();
+    let session_id = SessionId(id);
+    let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
+    let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
+    authorized_input_peer(machine, host, false, Capability::Keyboard, now)?;
+    let mut queues = state
+        .keyboard_queues
         .lock()
         .map_err(|_| ApiError::Unavailable)?;
     let mut batch = Vec::new();
@@ -704,6 +793,11 @@ async fn terminate(
         .lock()
         .map_err(|_| ApiError::Unavailable)?
         .remove(&session_id);
+    state
+        .keyboard_queues
+        .lock()
+        .map_err(|_| ApiError::Unavailable)?
+        .remove(&session_id);
     Ok(Json(SessionResponse {
         session_id,
         status: "ended",
@@ -736,6 +830,13 @@ async fn revoke(
     if ended || input.capability == Capability::Input || input.capability == Capability::Screen {
         state
             .input_queues
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
+            .remove(&session_id);
+    }
+    if ended || input.capability == Capability::Keyboard || input.capability == Capability::Screen {
+        state
+            .keyboard_queues
             .lock()
             .map_err(|_| ApiError::Unavailable)?
             .remove(&session_id);
@@ -789,6 +890,11 @@ async fn get_session(
             .lock()
             .map_err(|_| ApiError::Unavailable)?
             .remove(&SessionId(id));
+        state
+            .keyboard_queues
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
+            .remove(&SessionId(id));
     }
     let value = match machine.state() {
         SessionState::AwaitingConsent(_) => PublicState::AwaitingConsent,
@@ -835,6 +941,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/v1/sessions/{id}/input",
             get(dequeue_input).post(enqueue_input),
+        )
+        .route(
+            "/v1/sessions/{id}/keyboard",
+            get(dequeue_keyboard).post(enqueue_keyboard),
         )
         .route("/v1/sessions/{id}/decision", post(decide))
         .route("/v1/sessions/{id}/revoke", post(revoke))
@@ -1497,6 +1607,20 @@ mod tests {
             .unwrap();
         assert_eq!(approval.status(), StatusCode::OK);
 
+        // Mouse permission never implicitly grants keyboard access.
+        let keyboard_path = format!("/v1/sessions/{}/keyboard", session_id.0);
+        let keyboard_denied = service
+            .clone()
+            .oneshot(signed_request(
+                &operator,
+                "POST",
+                &keyboard_path,
+                br#"{"type":"character","value":"a"}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(keyboard_denied.status(), StatusCode::FORBIDDEN);
+
         let unauthenticated = service
             .clone()
             .oneshot(
@@ -1651,6 +1775,222 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn keyboard_relay_requires_separate_grant_and_purges_on_pause_and_revoke() {
+        let state = Arc::new(AppState::default());
+        let service = router(state.clone());
+        let operator = SigningKey::from_bytes(&[91_u8; 32]);
+        let host = SigningKey::from_bytes(&[92_u8; 32]);
+        let outsider = SigningKey::from_bytes(&[93_u8; 32]);
+        for key in [&operator, &host, &outsider] {
+            assert_eq!(
+                service
+                    .clone()
+                    .oneshot(signed_request(key, "POST", "/v1/devices", b"{}".to_vec()))
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::OK
+            );
+        }
+        let id = SessionId(Uuid::new_v4());
+        let request = SessionRequest {
+            protocol_version: seven_protocol::PROTOCOL_VERSION,
+            session_id: id,
+            operator: device_id(&operator.verifying_key()),
+            host: device_id(&host.verifying_key()),
+            requested: BTreeSet::from([Capability::Screen, Capability::Keyboard]),
+            expires_at_ms: now_ms() + 30_000,
+        };
+        assert_eq!(
+            service
+                .clone()
+                .oneshot(signed_request(
+                    &operator,
+                    "POST",
+                    "/v1/sessions",
+                    serde_json::to_vec(&request).unwrap()
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::CREATED
+        );
+        let path = format!("/v1/sessions/{}/keyboard", id.0);
+        let event = r#"{"type":"character","value":"á"}"#.as_bytes().to_vec();
+        assert_eq!(
+            service
+                .clone()
+                .oneshot(signed_request(&operator, "POST", &path, event.clone()))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            service
+                .clone()
+                .oneshot(signed_request(
+                    &host,
+                    "POST",
+                    &format!("/v1/sessions/{}/decision", id.0),
+                    br#"{"approve":true,"granted":["screen","keyboard"]}"#.to_vec()
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        for key in [&host, &outsider] {
+            assert_eq!(
+                service
+                    .clone()
+                    .oneshot(signed_request(key, "POST", &path, event.clone()))
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::FORBIDDEN
+            );
+        }
+        for key in [&operator, &outsider] {
+            assert_eq!(
+                service
+                    .clone()
+                    .oneshot(signed_request(key, "GET", &path, vec![]))
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::FORBIDDEN
+            );
+        }
+        assert_eq!(
+            service
+                .clone()
+                .oneshot(signed_request(
+                    &operator,
+                    "POST",
+                    &path,
+                    br#"{"type":"character","value":"\n"}"#.to_vec()
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            service
+                .clone()
+                .oneshot(signed_request(&operator, "POST", &path, event.clone()))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::ACCEPTED
+        );
+        state
+            .keyboard_queues
+            .lock()
+            .unwrap()
+            .get_mut(&id)
+            .unwrap()
+            .last_accepted_ms = Some(now_ms().saturating_add(1_000));
+        assert_eq!(
+            service
+                .clone()
+                .oneshot(signed_request(&operator, "POST", &path, event.clone()))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        let fetched = service
+            .clone()
+            .oneshot(signed_request(&host, "GET", &path, vec![]))
+            .await
+            .unwrap();
+        let bytes = to_bytes(fetched.into_body(), MAX_PAYLOAD_SIZE)
+            .await
+            .unwrap();
+        let events: Vec<KeyboardEvent> = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(events, vec![KeyboardEvent::Character { value: 'á' }]);
+        state
+            .keyboard_queues
+            .lock()
+            .unwrap()
+            .get_mut(&id)
+            .unwrap()
+            .last_accepted_ms = Some(0);
+        assert_eq!(
+            service
+                .clone()
+                .oneshot(signed_request(&operator, "POST", &path, event.clone()))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::ACCEPTED
+        );
+        assert_eq!(
+            service
+                .clone()
+                .oneshot(signed_request(
+                    &host,
+                    "POST",
+                    &format!("/v1/sessions/{}/screen-delivery", id.0),
+                    br#"{"enabled":false}"#.to_vec()
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert!(!state.keyboard_queues.lock().unwrap().contains_key(&id));
+        assert_eq!(
+            service
+                .clone()
+                .oneshot(signed_request(&operator, "POST", &path, event.clone()))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            service
+                .clone()
+                .oneshot(signed_request(
+                    &host,
+                    "POST",
+                    &format!("/v1/sessions/{}/screen-delivery", id.0),
+                    br#"{"enabled":true}"#.to_vec()
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            service
+                .clone()
+                .oneshot(signed_request(
+                    &host,
+                    "POST",
+                    &format!("/v1/sessions/{}/revoke", id.0),
+                    br#"{"capability":"keyboard"}"#.to_vec()
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            service
+                .clone()
+                .oneshot(signed_request(&operator, "POST", &path, event))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[tokio::test]
     async fn view_only_session_never_accepts_remote_pointer_events() {
         let service = router(Arc::new(AppState::default()));
         let operator = SigningKey::from_bytes(&[84_u8; 32]);
@@ -1756,7 +2096,8 @@ mod tests {
         assert_eq!(response.status(), StatusCode::CREATED);
         let path = format!("/v1/sessions/{}/frame", id.0);
 
-        let mut png = vec![0u8; 33];
+        // Exercise signing and verification above the former 64 KiB body cap.
+        let mut png = vec![0u8; 96 * 1024];
         png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
         png[8..12].copy_from_slice(&13u32.to_be_bytes());
         png[12..16].copy_from_slice(b"IHDR");
