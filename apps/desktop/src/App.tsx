@@ -49,6 +49,9 @@ export function App() {
   const [mouseBusy, setMouseBusy] = useState(false);
   const lastMouseMovement = useRef(0);
   const inputSendBusy = useRef(false);
+  const lastMouseWireAt = useRef(0);
+  const mouseSendChain = useRef<Promise<void>>(Promise.resolve());
+  const viewerMouseEnabledRef = useRef(false);
   const [feedback, setFeedback] = useState("");
   const [busy, setBusy] = useState(true);
   const [enrolling, setEnrolling] = useState(false);
@@ -330,6 +333,10 @@ export function App() {
   }, [hostMouseSession, streamingSession, presenceActive, backendReady]);
 
   useEffect(() => {
+    viewerMouseEnabledRef.current = viewerMouseActive;
+  }, [viewerMouseActive]);
+
+  useEffect(() => {
     if (!outboundSession || outboundSession.status !== "active" ||
         !operatorSessions.some((item) =>
           item.session_id === outboundSession.session_id && item.granted.includes("input")
@@ -448,14 +455,25 @@ export function App() {
   }
 
   async function submitViewerMouse(event: RemoteMouseEvent, motion: boolean): Promise<void> {
-    if (!viewerMouseActive || !outboundSession || outboundSession.status !== "active") return;
+    if (!viewerMouseEnabledRef.current || !outboundSession || outboundSession.status !== "active") return;
     if (inputSendBusy.current && motion) return;
     if (motion) inputSendBusy.current = true;
+    const sessionId = outboundSession.session_id;
+    // Serialize calls so a click immediately following mouse movement cannot
+    // trip the server's 20 ms rate limit or be reordered by the network.
+    const send = mouseSendChain.current.then(async () => {
+      const remaining = Math.max(0, 35 - (Date.now() - lastMouseWireAt.current));
+      if (remaining > 0) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, remaining));
+      }
+      if (!viewerMouseEnabledRef.current) return;
+      await sendRemoteMouse(sessionId, event);
+      lastMouseWireAt.current = Date.now();
+    });
+    mouseSendChain.current = send.catch(() => {});
     try {
-      await sendRemoteMouse(outboundSession.session_id, event);
+      await send;
     } catch (error: unknown) {
-      // Network, revocation and rate limiting must not leave pointer control
-      // looking active after a failed command.
       setViewerMouseActive(false);
       setFeedback(error instanceof Error ? error.message : "Controle do mouse interrompido.");
     } finally {
