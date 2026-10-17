@@ -127,6 +127,16 @@ async function main() {
       await call(actor, "POST", "/v1/sessions", invite, 401); // Offline host
       const registration = await call(host, "POST", "/v1/devices", {}, 200);
       assert.equal(registration.device_id, host.deviceId);
+      const target = "/v1/devices/" + host.deviceId + "/presence";
+      const online = await call(actor, "GET", target, undefined, 200);
+      assert.deepEqual(online, { device_id: host.deviceId, online: true });
+      const unknownId = randomUUID();
+      const unknown = await call(actor, "GET", "/v1/devices/" + unknownId + "/presence", undefined, 200);
+      assert.deepEqual(unknown, { device_id: unknownId, online: false });
+      // An unsigned request must never enumerate device presence.
+      const anonymous = await fetch(base + target, { signal: AbortSignal.timeout(5000) });
+      assert.equal(anonymous.status, 401);
+
     });
     await verify("signed-payload-tampering-and-replay", async () => {
       const route = "/v1/devices/heartbeat", proof = signed(host, "POST", route, {});

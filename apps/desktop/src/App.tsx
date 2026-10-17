@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { DeviceDirectory } from "./DeviceDirectory";
 import {
   getBackendStatus,
   getLocalStatus,
@@ -1138,11 +1139,21 @@ export function App() {
         )}
 
         {page === "dispositivos" && (
-          <div className="content"><div className="welcome compact"><div className="eyebrow">SEUS EQUIPAMENTOS</div>
-            <h1>Dispositivos</h1><p>Gerencie futuramente favoritos e computadores autorizados.</p></div>
-            <section className="panel empty-page"><div className="empty-state"><span className="empty-illustration">▣</span>
-              <strong>Nenhum dispositivo cadastrado</strong><span>O diretório será habilitado após concluir os serviços de identidade e autenticação.</span>
-            </div></section>
+          <div className="content">
+            <div className="welcome compact">
+              <div className="eyebrow">SEUS EQUIPAMENTOS</div>
+              <h1>Dispositivos</h1>
+              <p>Organize contatos e favoritos locais. Adicionar um dispositivo não equivale a autorização remota.</p>
+            </div>
+            <DeviceDirectory
+              ownDeviceId={status?.device_id ?? ""}
+              presenceActive={presenceActive && backendReady}
+              onConnect={(id) => {
+                setTarget(id);
+                setPage("inicio");
+                setFeedback("ID preenchido no convite. Para se conectar, solicite autorização explícita ao host.");
+              }}
+            />
           </div>
         )}
 
