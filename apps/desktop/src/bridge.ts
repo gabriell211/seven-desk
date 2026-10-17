@@ -81,6 +81,11 @@ export async function sendSessionChat(sessionId: string, text: string): Promise<
   return invoke<ChatMessage>("send_session_chat", { sessionId, text });
 }
 
+export async function revokeSessionChat(sessionId: string): Promise<void> {
+  if (!isTauri()) throw new Error("Revogação disponível apenas no aplicativo instalado.");
+  return invoke<void>("revoke_session_chat", { sessionId });
+}
+
 export async function listSessionChat(sessionId: string): Promise<ChatMessage[]> {
   if (!isTauri()) return [];
   return invoke<ChatMessage[]>("list_session_chat", { sessionId });
