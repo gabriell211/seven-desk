@@ -123,6 +123,7 @@ pub fn run() {
             heartbeat_local_device,
             session_api::create_session_request,
             session_api::list_pending_invitations,
+            session_api::list_active_authorizations,
             session_api::decide_session,
             session_api::session_status,
             session_api::end_session
