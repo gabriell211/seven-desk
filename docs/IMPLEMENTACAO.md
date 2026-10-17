@@ -1,4 +1,4 @@
-# Seven Desk — Primeira entrega executável
+# Seven Desk — Estado técnico das entregas executáveis
 
 Esta documentação descreve o **código que está começando a existir**. Não declarar captura de tela, controle remoto ou acesso não assistido como funcionais até que estejam integrados e testados.
 
@@ -34,7 +34,7 @@ cargo test --workspace
 cargo run -p seven-server       # API dev, apenas loopback 127.0.0.1:43821
 ```
 
-O serviço backend inicial expõe `GET /healthz` e rotas protegidas por assinatura para registro/convites. Não iniciar controle de dispositivo sem handshake, autorização do host e implantação segura.
+O serviço backend expõe `GET /healthz`, registro, convites, autorização, revogação, quadros PNG e pausas de entrega protegidos por assinatura. Não iniciar controle de dispositivo sem handshake, autorização do host e implantação segura.
 
 ## Protocolo de assinatura (versão 1)
 
@@ -53,7 +53,7 @@ seven-desk/request/v1
 
 A chave identifica o dispositivo por UUID derivado do primeiro bloco de 16 bytes de SHA-256 da chave pública. O servidor verifica timestamp dentro de 60 segundos, validade da assinatura e rejeita reuso de nonce. **Isto é um protocolo inicial de pesquisa, não uma especificação auditada para produção.**
 
-`POST /v1/devices` aceita exatamente `{}` assinado. A sessão requer ambos os dispositivos cadastrados e operador autenticado. A decisão é exclusivamente do host. Após o aceite, a sessão tem prazo próprio (até 8 horas inicialmente) separado da expiração do convite. O host pode revogar capacidades por `POST /v1/sessions/{id}/revoke` com assinatura. O canal de mídia **não existe nesta entrega**, e o backend informa `production_ready: false`.
+`POST /v1/devices` aceita exatamente `{}` assinado. A sessão requer ambos os dispositivos cadastrados e operador autenticado. A decisão é exclusivamente do host. Após o aceite, a sessão tem prazo próprio (até 8 horas inicialmente) separado da expiração do convite. O host pode revogar capacidades por `POST /v1/sessions/{id}/revoke` com assinatura. Existe um **canal experimental de PNGs recentes**, exclusivamente após autorização do host, mas **não há vídeo E2EE nem transporte de input**. O backend informa `production_ready: false`.
 
 ## Evolução validada em 17/10/2026
 
@@ -70,13 +70,26 @@ A documentação experimental dos endpoints está em [API_DESENVOLVIMENTO.md](AP
 - [PR #81](https://github.com/gabriell211/seven-desk/pull/81) — **merged, CI 5/5**: comandos nativos Tauri de criação de convite, leitura da fila, aceite/recusa do host, consulta de estado e encerramento; interface React usa essas operações assinadas de verdade, com solicitação limitada à capacidade `screen`.
 - [PR #82](https://github.com/gabriell211/seven-desk/pull/82) — **merged, CI 5/5**: host consegue listar todas as autorizações ativas destinadas à sua identidade, inclusive após reabrir a janela, e encerrá-las. Testes HTTP impedem listagem por operador/terceiros e conferem revogação.
 
-**Restrições que permanecem:** as autorizações atuais são **apenas metadados**, não há fluxo de pixels, relay, captura nativa nem acesso a outro computador via WAN. `127.0.0.1` e estado temporário continuam intencionais. Testes CI não substituem ensaios em dois desktops reais. A infraestrutura segura para conexões remotas e o serviço host são as prioridades de implementação.
+**Situação posterior a #82:** foi implementado um caminho de pixels reais de captura manual Windows e de quadros repetidos voluntariamente (~1 FPS), além de URL HTTPS de desenvolvimento configurável. O servidor ainda escuta em `127.0.0.1`, não tem E2EE nem serviços permanentes; testes de CI não substituem ensaios de dois desktops reais. A infraestrutura segura e o serviço host seguem como prioridades.
+
+## Captura e controles de tela — 17/10/2026
+
+- [PR #83](https://github.com/gabriell211/seven-desk/pull/83) — buffer temporário de quadros PNG por sessão, limite de 2 MiB, acesso assinado e validado pelo host e pelo operador.
+- [PR #84](https://github.com/gabriell211/seven-desk/pull/84) — captura manual de um quadro real no Windows e exibição autorizada no desktop.
+- [PR #85](https://github.com/gabriell211/seven-desk/pull/85) — endereço do control plane configurável para testes privados com HTTPS obrigatório fora do loopback.
+- [PR #86](https://github.com/gabriell211/seven-desk/pull/86) — atualização voluntária de tela de até ~1 FPS, com parada local e visualização de quadros recentes.
+- [PR #87](https://github.com/gabriell211/seven-desk/pull/87) — recuperação da sessão autorizada do operador após reabrir a interface, com isolamento por identidade assinada.
+- [PR #88](https://github.com/gabriell211/seven-desk/pull/88) — comentários de implementação corrigidos, sem mudar funcionalidades.
+- [PR #89](https://github.com/gabriell211/seven-desk/pull/89) — elimina quadros privados da memória ao revogar ou encerrar e serializa verificação de autorização e publicação para não reintroduzir quadros após o encerramento.
+- [PR #90](https://github.com/gabriell211/seven-desk/pull/90) — interruptor host-only para pausar/retomar entrega de quadros, limpa cache e rejeita novas leituras/uploads enquanto pausado; implementação Tauri e UI, testes e CI 6/6 aprovados.
+
+**Validação:** os PRs #87–#90 estão integrados. Todos os workflows verificados para #89 e #90 tiveram seis jobs aprovados. Isso confirma compilação e testes automatizados, **não** usabilidade E2E ou produção. Ainda não há controle remoto completo, E2EE, codificação de vídeo profissional, instalação de serviço host autônomo nem assinatura/homologação de instaladores.
 
 ## O que ainda bloqueia uso real
 
 1. Implementar serviço host real e permanente, rotação/revogação de identidades e operação multi-dispositivo. A UI já consegue registrar sua presença no servidor local por requisição assinada, mas **isso não habilita controle remoto**.
 2. Authn/authz final, persistência PostgreSQL, limpeza de sessões e proteção contra DoS.
-3. Comunicação de controle protegida ponta a ponta (P2P/relay), captura/codec e teclado/mouse com API nativa.
+3. Comunicação de controle protegida ponta a ponta (P2P/relay), codecs com baixa latência e **teclado/mouse** com APIs nativas. A captura Windows e envio de PNG são experimentais; não equivalem ao motor de vídeo pronto.
 4. Serviço do host/IPC e atualização assinada do aplicativo.
 5. E2E em duas máquinas reais e testes de segurança cross-platform.
 6. Escolha explícita da licença do Seven Desk; o código provisório usa `UNLICENSED`.
