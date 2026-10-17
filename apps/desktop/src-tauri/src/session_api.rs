@@ -265,7 +265,7 @@ pub async fn fetch_authorized_screen_frame(session_id: String) -> Result<String,
     let id = parse_session_id(&session_id)?;
     let path = format!("/v1/sessions/{id}/frame");
     let png = signed_request(Method::GET, path, vec![]).await?;
-    if png.len() > MAX_FRAME_BYTES || !png.starts_with(b"\x5cx89PNG\x5cr\x5cn\x5cx1a\x5cn") {
+    if png.len() > MAX_FRAME_BYTES || !png.starts_with(b"\x89PNG\r\n\x1a\n") {
         return Err("O servidor retornou um quadro inválido".to_string());
     }
     Ok(BASE64.encode(png))
