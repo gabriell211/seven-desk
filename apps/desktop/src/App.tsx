@@ -398,7 +398,7 @@ export function App() {
             <p>A tela principal está sendo capturada enquanto esta janela permanecer aberta. Sem controle remoto ou áudio.</p>
             <button className="secondary" type="button" onClick={() => setStreamingSession(null)}>Parar compartilhamento agora</button>
             <button className="secondary" type="button" disabled={ending}
-              onClick={() => void closeSession(streamingSession)}>Encerrar autorização de tela</button>
+              onClick={() => { if (streamingSession) void closeSession(streamingSession); }}>Encerrar autorização de tela</button>
           </div>
         )}
 
