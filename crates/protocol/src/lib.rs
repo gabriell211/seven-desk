@@ -38,6 +38,44 @@ pub enum Capability {
     Record,
 }
 
+/// Mouse control is intentionally limited to the primary display in this
+/// first Windows-only implementation. Coordinates are normalized to 0..=10000
+/// so that input never contains absolute screen coordinates supplied by a peer.
+pub const MAX_MOUSE_COORD: u16 = 10_000;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MouseEvent {
+    Move { x: u16, y: u16 },
+    Click { x: u16, y: u16, button: MouseButton },
+    Scroll { x: u16, y: u16, steps: i8 },
+}
+
+impl MouseEvent {
+    pub fn validate(self) -> Result<(), ProtocolError> {
+        let (x, y) = match self {
+            Self::Move { x, y } | Self::Click { x, y, .. } | Self::Scroll { x, y, .. } => (x, y),
+        };
+        if x > MAX_MOUSE_COORD || y > MAX_MOUSE_COORD {
+            return Err(ProtocolError::InvalidInputEvent);
+        }
+        if let Self::Scroll { steps, .. } = self
+            && (steps == 0 || !(-5..=5).contains(&steps))
+        {
+            return Err(ProtocolError::InvalidInputEvent);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SessionRequest {
@@ -98,6 +136,8 @@ pub enum ProtocolError {
     ScopeEscalation,
     #[error("screen access is required before control")]
     MissingScreen,
+    #[error("invalid remote mouse event")]
+    InvalidInputEvent,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -352,6 +392,45 @@ mod tests {
             session.set_screen_delivery(r.host, true, 205),
             Err(ProtocolError::InvalidTransition)
         );
+    }
+
+    #[test]
+    fn mouse_events_are_bounded_and_reject_invalid_coordinates_or_scroll() {
+        let good = MouseEvent::Click {
+            x: MAX_MOUSE_COORD,
+            y: 0,
+            button: MouseButton::Left,
+        };
+        assert!(good.validate().is_ok());
+        assert_eq!(
+            MouseEvent::Move {
+                x: MAX_MOUSE_COORD + 1,
+                y: 2
+            }
+            .validate(),
+            Err(ProtocolError::InvalidInputEvent)
+        );
+        assert_eq!(
+            MouseEvent::Scroll {
+                x: 1,
+                y: 1,
+                steps: 0
+            }
+            .validate(),
+            Err(ProtocolError::InvalidInputEvent)
+        );
+        assert_eq!(
+            MouseEvent::Scroll {
+                x: 1,
+                y: 1,
+                steps: -6
+            }
+            .validate(),
+            Err(ProtocolError::InvalidInputEvent)
+        );
+        let wire = serde_json::to_vec(&good).unwrap();
+        assert_eq!(serde_json::from_slice::<MouseEvent>(&wire).unwrap(), good);
+        assert!(serde_json::from_slice::<MouseEvent>(br#"{"type":"key","key":"super"}"#).is_err());
     }
 
     #[test]

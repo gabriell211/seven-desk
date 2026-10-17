@@ -15,11 +15,11 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use seven_protocol::{
-    Capability, DeviceId, SessionId, SessionMachine, SessionRequest, SessionState,
+    Capability, DeviceId, MouseEvent, SessionId, SessionMachine, SessionRequest, SessionState,
 };
 use seven_security::{NonceWindow, RequestProof, verify};
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, VecDeque},
     sync::{Arc, Mutex, RwLock},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -32,6 +32,10 @@ const MAX_PAYLOAD_SIZE: usize = 64 * 1_024;
 const MAX_FRAME_BYTES: usize = 2 * 1_024 * 1_024;
 const MAX_CACHED_FRAMES: usize = 8;
 const FRAME_FRESHNESS_MS: u64 = 15_000;
+const MAX_INPUT_SESSIONS: usize = 8;
+const MAX_INPUT_QUEUE: usize = 32;
+const INPUT_EVENT_TTL_MS: u64 = 2_000;
+const MIN_INPUT_INTERVAL_MS: u64 = 20;
 
 #[derive(Default)]
 pub struct AppState {
@@ -39,6 +43,9 @@ pub struct AppState {
     sessions: Mutex<HashMap<SessionId, SessionMachine>>,
     // Experimental single latest-frame buffer. Never persist desktop pixels.
     frames: Mutex<HashMap<SessionId, StoredFrame>>,
+    // Transient pointer events; only the authenticated host consumes these.
+    // Never persist user input or allow unattended input injection.
+    input_queues: Mutex<HashMap<SessionId, InputQueue>>,
     nonce_window: NonceWindow,
 }
 
@@ -50,6 +57,7 @@ pub enum ApiError {
     NotFound,
     Conflict,
     Unavailable,
+    RateLimited,
 }
 
 impl IntoResponse for ApiError {
@@ -61,6 +69,7 @@ impl IntoResponse for ApiError {
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             Self::Conflict => (StatusCode::CONFLICT, "invalid_session_state"),
             Self::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "temporary_unavailable"),
+            Self::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
         };
         (status, Json(serde_json::json!({ "error": message }))).into_response()
     }
@@ -416,6 +425,11 @@ async fn configure_screen_delivery(
             .lock()
             .map_err(|_| ApiError::Unavailable)?
             .remove(&session_id);
+        state
+            .input_queues
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
+            .remove(&session_id);
     }
     Ok(Json(ScreenDeliveryResponse {
         enabled: input.enabled,
@@ -486,6 +500,108 @@ async fn read_frame(
         frame.png.clone(),
     )
         .into_response())
+}
+
+/// Events live in memory briefly and are never recorded to disk.
+#[derive(Default)]
+struct InputQueue {
+    events: VecDeque<(u64, MouseEvent)>,
+    last_accepted_ms: Option<u64>,
+}
+
+fn authorized_input_peer(
+    machine: &mut SessionMachine,
+    actor: DeviceId,
+    send: bool,
+    now: u64,
+) -> Result<(), ApiError> {
+    machine.expire(now);
+    let (host, operator) = machine.participants().ok_or(ApiError::Forbidden)?;
+    if (send && actor != operator) || (!send && actor != host) {
+        return Err(ApiError::Forbidden);
+    }
+    if !machine.permits(Capability::Input, now) || !machine.permits_screen_delivery(now) {
+        return Err(ApiError::Forbidden);
+    }
+    Ok(())
+}
+
+/// Signed operator-to-host pointer relay. This endpoint never injects OS
+/// events; the receiving *foreground* host application must explicitly opt in.
+/// Validate scope while holding the same session lock as revocation/termination.
+async fn enqueue_input(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<StatusCode, ApiError> {
+    let path = format!("/v1/sessions/{id}/input");
+    let operator = authenticated(&state, &headers, "POST", &path, &body)?;
+    known(&state, operator)?;
+    let event: MouseEvent = serde_json::from_slice(&body).map_err(|_| ApiError::Invalid)?;
+    event.validate().map_err(|_| ApiError::Invalid)?;
+    let now = now_ms();
+    let session_id = SessionId(id);
+    let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
+    let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
+    authorized_input_peer(machine, operator, true, now)?;
+    let mut queues = state
+        .input_queues
+        .lock()
+        .map_err(|_| ApiError::Unavailable)?;
+    queues.retain(|_, queue| {
+        queue
+            .events
+            .retain(|(at, _)| now.saturating_sub(*at) <= INPUT_EVENT_TTL_MS);
+        !queue.events.is_empty()
+            || queue
+                .last_accepted_ms
+                .is_some_and(|at| now.saturating_sub(at) <= INPUT_EVENT_TTL_MS)
+    });
+    if !queues.contains_key(&session_id) && queues.len() >= MAX_INPUT_SESSIONS {
+        return Err(ApiError::RateLimited);
+    }
+    let queue = queues.entry(session_id).or_default();
+    if queue
+        .last_accepted_ms
+        .is_some_and(|last| now.saturating_sub(last) < MIN_INPUT_INTERVAL_MS)
+        || queue.events.len() >= MAX_INPUT_QUEUE
+    {
+        return Err(ApiError::RateLimited);
+    }
+    queue.events.push_back((now, event));
+    queue.last_accepted_ms = Some(now);
+    Ok(StatusCode::ACCEPTED)
+}
+
+/// Only the destination host retrieves input. Delivery is *at most once*:
+/// a successful fetch drains a bounded batch, with stale events discarded.
+async fn dequeue_input(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<MouseEvent>>, ApiError> {
+    let path = format!("/v1/sessions/{id}/input");
+    let host = authenticated(&state, &headers, "GET", &path, &[])?;
+    known(&state, host)?;
+    let now = now_ms();
+    let session_id = SessionId(id);
+    let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
+    let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
+    authorized_input_peer(machine, host, false, now)?;
+    let mut queues = state
+        .input_queues
+        .lock()
+        .map_err(|_| ApiError::Unavailable)?;
+    let mut batch = Vec::new();
+    if let Some(queue) = queues.get_mut(&session_id) {
+        while let Some((at, event)) = queue.events.pop_front() {
+            if now.saturating_sub(at) <= INPUT_EVENT_TTL_MS {
+                batch.push(event);
+            }
+        }
+    }
+    Ok(Json(batch))
 }
 
 #[derive(Serialize)]
@@ -583,6 +699,11 @@ async fn terminate(
         .lock()
         .map_err(|_| ApiError::Unavailable)?
         .remove(&session_id);
+    state
+        .input_queues
+        .lock()
+        .map_err(|_| ApiError::Unavailable)?
+        .remove(&session_id);
     Ok(Json(SessionResponse {
         session_id,
         status: "ended",
@@ -612,6 +733,13 @@ async fn revoke(
         .revoke(actor, input.capability)
         .map_err(|_| ApiError::Forbidden)?;
     let ended = matches!(machine.state(), SessionState::Ended);
+    if ended || input.capability == Capability::Input || input.capability == Capability::Screen {
+        state
+            .input_queues
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
+            .remove(&session_id);
+    }
     if ended || input.capability == Capability::Screen {
         state
             .frames
@@ -653,6 +781,11 @@ async fn get_session(
     if machine.expire(now_ms()) {
         state
             .frames
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
+            .remove(&SessionId(id));
+        state
+            .input_queues
             .lock()
             .map_err(|_| ApiError::Unavailable)?
             .remove(&SessionId(id));
@@ -698,6 +831,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/v1/sessions/{id}/screen-delivery",
             post(configure_screen_delivery),
+        )
+        .route(
+            "/v1/sessions/{id}/input",
+            get(dequeue_input).post(enqueue_input),
         )
         .route("/v1/sessions/{id}/decision", post(decide))
         .route("/v1/sessions/{id}/revoke", post(revoke))
@@ -1299,6 +1436,286 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(raw.as_ref(), b"[]");
+    }
+
+    #[tokio::test]
+    async fn pointer_relay_requires_explicit_input_grant_and_host_identity() {
+        let state = Arc::new(AppState::default());
+        let service = router(state.clone());
+        let operator = SigningKey::from_bytes(&[81_u8; 32]);
+        let host = SigningKey::from_bytes(&[82_u8; 32]);
+        let outsider = SigningKey::from_bytes(&[83_u8; 32]);
+        for key in [&operator, &host, &outsider] {
+            let response = service
+                .clone()
+                .oneshot(signed_request(key, "POST", "/v1/devices", b"{}".to_vec()))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+        let session_id = SessionId(Uuid::new_v4());
+        let request = SessionRequest {
+            protocol_version: seven_protocol::PROTOCOL_VERSION,
+            session_id,
+            operator: device_id(&operator.verifying_key()),
+            host: device_id(&host.verifying_key()),
+            requested: BTreeSet::from([Capability::Screen, Capability::Input]),
+            expires_at_ms: now_ms() + 30_000,
+        };
+        let created = service
+            .clone()
+            .oneshot(signed_request(
+                &operator,
+                "POST",
+                "/v1/sessions",
+                serde_json::to_vec(&request).unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::CREATED);
+        let path = format!("/v1/sessions/{}/input", session_id.0);
+        let move_event = br#"{"type":"move","x":5000,"y":7500}"#.to_vec();
+
+        // A signed event is still forbidden before a decision.
+        let premature = service
+            .clone()
+            .oneshot(signed_request(&operator, "POST", &path, move_event.clone()))
+            .await
+            .unwrap();
+        assert_eq!(premature.status(), StatusCode::FORBIDDEN);
+
+        let decision_path = format!("/v1/sessions/{}/decision", session_id.0);
+        let approval = service
+            .clone()
+            .oneshot(signed_request(
+                &host,
+                "POST",
+                &decision_path,
+                br#"{"approve":true,"granted":["screen","input"]}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(approval.status(), StatusCode::OK);
+
+        let unauthenticated = service
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(&path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+        for key in [&host, &outsider] {
+            let blocked = service
+                .clone()
+                .oneshot(signed_request(key, "POST", &path, move_event.clone()))
+                .await
+                .unwrap();
+            assert_eq!(blocked.status(), StatusCode::FORBIDDEN);
+        }
+        for key in [&operator, &outsider] {
+            let blocked = service
+                .clone()
+                .oneshot(signed_request(key, "GET", &path, vec![]))
+                .await
+                .unwrap();
+            assert_eq!(blocked.status(), StatusCode::FORBIDDEN);
+        }
+        let malformed = service
+            .clone()
+            .oneshot(signed_request(
+                &operator,
+                "POST",
+                &path,
+                br#"{"type":"click","x":12000,"y":0,"button":"left"}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+        let accepted = service
+            .clone()
+            .oneshot(signed_request(&operator, "POST", &path, move_event.clone()))
+            .await
+            .unwrap();
+        assert_eq!(accepted.status(), StatusCode::ACCEPTED);
+        assert_eq!(
+            state.input_queues.lock().unwrap()[&session_id].events.len(),
+            1
+        );
+
+        // Host gets a single bounded batch. Replaying the same request does
+        // not repeat OS input events, and rate limiting survives a dequeue.
+        let first = service
+            .clone()
+            .oneshot(signed_request(&host, "GET", &path, vec![]))
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        let raw = to_bytes(first.into_body(), MAX_PAYLOAD_SIZE).await.unwrap();
+        let got: Vec<MouseEvent> = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(got, vec![MouseEvent::Move { x: 5000, y: 7500 }]);
+        let again = service
+            .clone()
+            .oneshot(signed_request(&host, "GET", &path, vec![]))
+            .await
+            .unwrap();
+        let raw = to_bytes(again.into_body(), MAX_PAYLOAD_SIZE).await.unwrap();
+        assert_eq!(raw.as_ref(), b"[]");
+        // Force a deterministic recently accepted timestamp instead of
+        // assuming a busy CI runner can execute within 20 milliseconds.
+        state
+            .input_queues
+            .lock()
+            .unwrap()
+            .get_mut(&session_id)
+            .unwrap()
+            .last_accepted_ms = Some(now_ms().saturating_add(1_000));
+        let too_fast = service
+            .clone()
+            .oneshot(signed_request(&operator, "POST", &path, move_event.clone()))
+            .await
+            .unwrap();
+        assert_eq!(too_fast.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // Clear interval in test state instead of introducing sleeps.
+        state
+            .input_queues
+            .lock()
+            .unwrap()
+            .get_mut(&session_id)
+            .unwrap()
+            .last_accepted_ms = Some(0);
+        let accepted = service
+            .clone()
+            .oneshot(signed_request(&operator, "POST", &path, move_event))
+            .await
+            .unwrap();
+        assert_eq!(accepted.status(), StatusCode::ACCEPTED);
+        let delivery_path = format!("/v1/sessions/{}/screen-delivery", session_id.0);
+        let pause = service
+            .clone()
+            .oneshot(signed_request(
+                &host,
+                "POST",
+                &delivery_path,
+                br#"{"enabled":false}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(pause.status(), StatusCode::OK);
+        assert!(!state.input_queues.lock().unwrap().contains_key(&session_id));
+        let paused = service
+            .clone()
+            .oneshot(signed_request(&host, "GET", &path, vec![]))
+            .await
+            .unwrap();
+        assert_eq!(paused.status(), StatusCode::FORBIDDEN);
+
+        let resume = service
+            .clone()
+            .oneshot(signed_request(
+                &host,
+                "POST",
+                &delivery_path,
+                br#"{"enabled":true}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resume.status(), StatusCode::OK);
+        let revoke = service
+            .clone()
+            .oneshot(signed_request(
+                &host,
+                "POST",
+                &format!("/v1/sessions/{}/revoke", session_id.0),
+                br#"{"capability":"input"}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(revoke.status(), StatusCode::OK);
+        let denied = service
+            .clone()
+            .oneshot(signed_request(
+                &operator,
+                "POST",
+                &path,
+                br#"{"type":"click","x":5,"y":5,"button":"left"}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn view_only_session_never_accepts_remote_pointer_events() {
+        let service = router(Arc::new(AppState::default()));
+        let operator = SigningKey::from_bytes(&[84_u8; 32]);
+        let host = SigningKey::from_bytes(&[85_u8; 32]);
+        for key in [&operator, &host] {
+            assert_eq!(
+                service
+                    .clone()
+                    .oneshot(signed_request(key, "POST", "/v1/devices", b"{}".to_vec()))
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::OK
+            );
+        }
+        let id = SessionId(Uuid::new_v4());
+        let request = SessionRequest {
+            protocol_version: seven_protocol::PROTOCOL_VERSION,
+            session_id: id,
+            operator: device_id(&operator.verifying_key()),
+            host: device_id(&host.verifying_key()),
+            requested: BTreeSet::from([Capability::Screen, Capability::Input]),
+            expires_at_ms: now_ms() + 30_000,
+        };
+        assert_eq!(
+            service
+                .clone()
+                .oneshot(signed_request(
+                    &operator,
+                    "POST",
+                    "/v1/sessions",
+                    serde_json::to_vec(&request).unwrap(),
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::CREATED
+        );
+        let approved = service
+            .clone()
+            .oneshot(signed_request(
+                &host,
+                "POST",
+                &format!("/v1/sessions/{}/decision", id.0),
+                br#"{"approve":true,"granted":["screen"]}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(approved.status(), StatusCode::OK);
+        let pointer_path = format!("/v1/sessions/{}/input", id.0);
+        for (key, method, body) in [
+            (
+                &operator,
+                "POST",
+                br#"{"type":"move","x":1,"y":1}"#.to_vec(),
+            ),
+            (&host, "GET", vec![]),
+        ] {
+            let res = service
+                .clone()
+                .oneshot(signed_request(key, method, &pointer_path, body))
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        }
     }
 
     #[tokio::test]

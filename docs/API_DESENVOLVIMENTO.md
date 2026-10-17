@@ -30,6 +30,8 @@ A mensagem canônica assinada é formada pelas linhas `seven-desk/request/v1`, m
 | `GET` | `/v1/sessions/host/active` | Listar somente autorizações ativas do host autenticado para revogar após reabrir o aplicativo |
 | `GET` | `/v1/sessions/operator/active` | Retornar somente sessões ativas do operador autenticado, mesmo após reiniciar a janela |
 | `POST` | `/v1/sessions/{id}/screen-delivery` | Somente o host ativa ou pausa o canal com `{"enabled":true|false}`; ao pausar, apaga o PNG e impede novas publicações até retomar |
+| `POST` | `/v1/sessions/{id}/input` | Operador autorizado envia evento de mouse normalizado e assinado, somente se host concedeu `screen` **e** `input` |
+| `GET` | `/v1/sessions/{id}/input` | Host autenticado consome lote temporário de eventos, sem executar OS input no servidor |
 | `POST` | `/v1/sessions/{id}/frame` | Host autorizado publica o último quadro PNG, limitado a 2 MiB |
 | `GET` | `/v1/sessions/{id}/frame` | Operador da sessão autorizada lê o quadro recente, com `Cache-Control: no-store` |
 | `GET` | `/v1/sessions/{id}` | Consultar estado quando autenticado e participante |
@@ -93,6 +95,14 @@ O host pode clicar em **Parar quadros** ou **Parar compartilhamento agora**. O d
 Retomar os quadros ou compartilhar outro quadro exige uma **nova ação explícita do host**, que solicita `{"enabled":true}`. O operador não pode reativar a entrega nem controlar a captura por API. A autorização original da sessão continua existindo até ser encerrada ou revogada; pausar a imagem não concede outras capacidades.
 
 Se o servidor estiver offline, o aplicativo interrompe imediatamente a captura local, mas não consegue confirmar a limpeza remota: a imagem já enviada expira pelo limite de 15 segundos do cache e a interface deve comunicar essa incerteza. A saída brusca do processo também impede novos quadros, embora não seja garantia de uma solicitação de parada concluída.
+
+## Canal experimental de eventos de mouse (sem injeção automática)
+
+O backend contém a primeira etapa do controle interativo: uma fila **em memória** de eventos `move`, `click` (botões esquer/direito/meio) e `scroll`. O operador precisa solicitar a capacidade `input` juntamente com `screen`, e somente o host pode concedê-la. A fila **não** executa eventos no sistema operacional: o processo host deve ler seus eventos após iniciar voluntariamente um serviço de entrada autorizado e aplicar limites adicionais de SO.
+
+Os eventos usam coordenadas relativas de **0 a 10000**, com validação rigorosa. Eventos de scroll têm `steps` entre -5 e 5, exceto zero. Há controle de taxa (mínimo 20ms entre eventos por sessão), fila de até 32 eventos por sessão, até 8 filas simultâneas e validade de 2 segundos. A consulta por host remove os eventos entregues, evitando reexecução do mesmo lote. A leitura e escrita ocorrem sob a mesma trava de autorização que revogação/encerramento. Parar o compartilhamento, revogar `input` ou encerrar uma sessão descarta imediatamente a fila pendente; o operador não pode consultar o lote ou ligar o controle por conta própria.
+
+**Não implementado nesta etapa:** teclado, injeção Windows, seleção de monitores, captura contínua de baixa latência e transporte E2EE. O backend intermediário consegue inspecionar eventos. Este canal é de pesquisa no laboratório, não está homologado para uso na Internet pública.
 
 ## Convites de suporte
 
