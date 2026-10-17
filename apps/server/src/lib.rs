@@ -1393,7 +1393,8 @@ mod tests {
 
     #[tokio::test]
     async fn operator_can_recover_only_owned_active_session_and_revoke() {
-        let service = router(Arc::new(AppState::default()));
+        let state = Arc::new(AppState::default());
+        let service = router(state.clone());
         let operator = SigningKey::from_bytes(&[71_u8; 32]);
         let host = SigningKey::from_bytes(&[72_u8; 32]);
         let unrelated = SigningKey::from_bytes(&[73_u8; 32]);
@@ -1493,6 +1494,17 @@ mod tests {
         assert_eq!(data[0]["host"], request.host.0.to_string());
         assert_eq!(data[0]["granted"], serde_json::json!(["screen"]));
 
+        // Simulate private pixels from the active session. Ending the session
+        // must wipe the cache immediately rather than relying on the frame TTL.
+        state.frames.lock().unwrap().insert(
+            session_id,
+            StoredFrame {
+                png: vec![1, 2, 3],
+                received_at_ms: now_ms(),
+            },
+        );
+        assert!(state.frames.lock().unwrap().contains_key(&session_id));
+
         let ended = service
             .clone()
             .oneshot(signed_request(
@@ -1504,6 +1516,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ended.status(), StatusCode::OK);
+        assert!(!state.frames.lock().unwrap().contains_key(&session_id));
         let after = service
             .clone()
             .oneshot(signed_request(&operator, "GET", path, vec![]))
