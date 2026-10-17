@@ -11,6 +11,8 @@ import {
   decideInvitation,
   readSessionState,
   terminateSession,
+  publishManualFrame,
+  getAuthorizedFrame,
   type LocalStatus,
   type SessionReceipt,
   type PendingInvitation,
@@ -45,6 +47,8 @@ export function App() {
   const [inbox, setInbox] = useState<PendingInvitation[]>([]);
   const [decisionBusy, setDecisionBusy] = useState<string | null>(null);
   const [ending, setEnding] = useState(false);
+  const [frameBusy, setFrameBusy] = useState(false);
+  const [lastFrame, setLastFrame] = useState<string | null>(null);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -212,13 +216,42 @@ export function App() {
     setEnding(true);
     try {
       const result = await terminateSession(sessionId);
-      if (outboundSession?.session_id === sessionId) setOutboundSession(result);
+      if (outboundSession?.session_id === sessionId) {
+        setOutboundSession(result);
+        setLastFrame(null);
+      }
       setActiveSessions((current) => current.filter((item) => item.session_id !== sessionId));
       setFeedback("Negociação encerrada e permissões revogadas.");
     } catch (error: unknown) {
       setFeedback(error instanceof Error ? error.message : "Não foi possível encerrar a sessão.");
     } finally {
       setEnding(false);
+    }
+  }
+
+  async function shareManualFrame(sessionId: string): Promise<void> {
+    if (frameBusy) return;
+    setFrameBusy(true);
+    try {
+      await publishManualFrame(sessionId);
+      setFeedback("Quadro da tela principal enviado após sua autorização. Nenhum streaming contínuo foi iniciado.");
+    } catch (error: unknown) {
+      setFeedback(error instanceof Error ? error.message : "Não foi possível capturar e compartilhar o quadro.");
+    } finally {
+      setFrameBusy(false);
+    }
+  }
+
+  async function viewManualFrame(sessionId: string): Promise<void> {
+    if (frameBusy) return;
+    setFrameBusy(true);
+    try {
+      setLastFrame(await getAuthorizedFrame(sessionId));
+      setFeedback("Quadro autorizado recebido. A imagem não se atualiza automaticamente.");
+    } catch (error: unknown) {
+      setFeedback(error instanceof Error ? error.message : "Nenhum quadro recente disponível.");
+    } finally {
+      setFrameBusy(false);
     }
   }
 
@@ -333,13 +366,26 @@ export function App() {
                   <div className="foot-note" role="status">
                     <strong>Estado:</strong> {
                       outboundSession.status === "awaiting_consent" ? "Aguardando aprovação" :
-                      outboundSession.status === "active" ? "Aprovado (sem transmissão de tela)" :
+                      outboundSession.status === "active" ? "Aprovado (quadro manual disponível)" :
                       outboundSession.status === "rejected" ? "Recusado pelo host" : "Encerrado"
                     }
+                    {outboundSession.status === "active" && (
+                      <button className="secondary" type="button" disabled={frameBusy}
+                        onClick={() => void viewManualFrame(outboundSession.session_id)}>
+                        {frameBusy ? "Carregando quadro..." : "Ver último quadro autorizado"}
+                      </button>
+                    )}
                     {(outboundSession.status === "awaiting_consent" || outboundSession.status === "active") && (
                       <button className="secondary" type="button" disabled={ending}
                         onClick={() => void closeSession(outboundSession.session_id)}>Cancelar / encerrar</button>
                     )}
+                  </div>
+                )}
+                {lastFrame && outboundSession?.status === "active" && (
+                  <div className="foot-note">
+                    <p>Captura estática autorizada. Sem atualização automática, áudio ou controle remoto.</p>
+                    <img src={lastFrame} alt="Último quadro da tela remota compartilhado manualmente pelo host"
+                      style={{ width: "100%", maxHeight: 480, objectFit: "contain", borderRadius: 8 }} />
                   </div>
                 )}
               </section>
@@ -375,10 +421,17 @@ export function App() {
                     <div className="setting-row" key={item.session_id}>
                       <div>
                         <strong>Operador: {item.operator}</strong>
-                        <p>Capacidades: {item.granted.join(", ")}. Autorização de negociação, sem captura.</p>
+                        <p>Capacidades: {item.granted.join(", ")}. Quadro estático compartilhado somente após clicar.</p>
                       </div>
-                      <button className="secondary" type="button" disabled={ending}
-                        onClick={() => void closeSession(item.session_id)}>Encerrar autorização</button>
+                      <div className="input-group">
+                        <button className="secondary" type="button"
+                          disabled={frameBusy || status?.operating_system !== "windows"}
+                          onClick={() => void shareManualFrame(item.session_id)}>
+                          {frameBusy ? "Capturando..." : "Compartilhar um quadro"}
+                        </button>
+                        <button className="secondary" type="button" disabled={ending}
+                          onClick={() => void closeSession(item.session_id)}>Encerrar autorização</button>
+                      </div>
                     </div>
                   ))
                 }
