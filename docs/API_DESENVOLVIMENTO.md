@@ -76,6 +76,14 @@ O programa reduz progressivamente a resolução de capturas grandes antes de cod
 
 **Limitações:** somente Windows captura nesta primeira etapa; não existe captura automática, streaming contínuo, mouse, teclado ou áudio remoto. O teste **em dois computadores** passa a ser possível mediante backend local + proxy HTTPS restrito à VPN, mas precisa de montagem, execução e evidências reais. O CI verifica compilação em Windows/Linux, não o funcionamento de captura em todos os monitores; E2E e segurança ainda são obrigatórios.
 
+## Atualização voluntária de tela (~1 quadro por segundo)
+
+O host Windows agora dispõe de `Iniciar quadros (~1 FPS)` e `Parar quadros`. Essa função **não inicia sozinha**: ela só fica disponível após aceite explícito do host para a capacidade `screen`, e permanece claramente indicada no topo do aplicativo. A interface envia no máximo um quadro por segundo, pulando ciclos se uma captura ainda estiver em andamento. Minimizar/ocultar a janela ou perder a autorização/conectividade interrompe novos envios. O botão **Encerrar autorização de tela** invalida a sessão no servidor.
+
+O operador autenticado pode iniciar `Atualizar automaticamente (~1 FPS)` ou parar a atualização. Falta de quadro novo limpa a imagem exibida; falha de autenticação ou conexão interrompe o modo de visualização. Cada solicitação consulta novamente as permissões no backend.
+
+Isto é uma **sequência de PNGs estáticos**, não uma sessão de vídeo codificada (H.264/AV1), não usa bitrate adaptativo nem oferece latência de controle profissional. O fluxo de teste em dois computadores exige servidor intermediário HTTPS em VPN, ainda **sem E2EE**. Não há execução independente da janela Tauri, serviço privilegiado, gravação em disco, controle de mouse/teclado ou instalação de host permanente.
+
 ## Convites de suporte
 
 - Pedido exige identidades registradas, nonce, assinatura e expiração curta.
