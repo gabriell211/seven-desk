@@ -39,7 +39,7 @@ jobs:
         with:
           node-version: "22"
       - name: Install frontend dependencies
-        run: npm install --no-audit --no-fund
+        run: npm install --no-package-lock --include=optional --no-audit --no-fund
       - name: Verify frontend types and build
         run: npm run desktop:build
       - name: Generate deterministic native icons
@@ -65,7 +65,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev pkg-config
-      - run: npm install --no-audit --no-fund
+      - run: npm install --no-package-lock --include=optional --no-audit --no-fund
       - run: npm run desktop:build
       - run: node scripts/generate-icons.mjs
       - name: Compile native app
@@ -85,7 +85,7 @@ jobs:
         with:
           node-version: "22"
       - name: Install frontend dependencies
-        run: npm install --no-audit --no-fund
+        run: npm install --no-package-lock --include=optional --no-audit --no-fund
       - name: Build UI and native icons
         run: |
           npm run desktop:build

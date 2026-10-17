@@ -5,7 +5,16 @@ on:
     branches: [main]
     paths:
       - "apps/desktop/**"
+      - "package*.json"
       - "scripts/generate-icons.mjs"
+      - "scripts/hash-installers.mjs"
+      - ".github/workflows/installers.yml"
+  pull_request:
+    paths:
+      - "apps/desktop/**"
+      - "package*.json"
+      - "scripts/generate-icons.mjs"
+      - "scripts/hash-installers.mjs"
       - ".github/workflows/installers.yml"
   workflow_dispatch:
 
@@ -42,12 +51,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev pkg-config rpm
+      # The committed npm lock currently contains only Windows native optional
+      # packages; npm's platform-native resolution must be enabled until the
+      # lock can be regenerated for all supported targets.
       - name: Install JavaScript dependencies
-        run: npm install --no-audit --no-fund
+        run: npm install --no-package-lock --include=optional --no-audit --no-fund
       - name: Generate Seven Desk icons
         run: node scripts/generate-icons.mjs
       - name: Build installable native packages
-        run: npm run tauri:build -- --bundles ${{ matrix.bundles }}
+        run: npm exec --workspace @seven/desktop -- tauri build --bundles ${{ matrix.bundles }}
       - name: Upload QA packages (NOT A RELEASE)
         uses: actions/upload-artifact@v4
         with:
