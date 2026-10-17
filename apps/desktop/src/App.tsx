@@ -5,7 +5,14 @@ import {
   heartbeatLocalDevice,
   initializeIdentity,
   registerLocalDevice,
+  requestSupport,
+  pendingInvitations,
+  decideInvitation,
+  readSessionState,
+  terminateSession,
   type LocalStatus,
+  type SessionReceipt,
+  type PendingInvitation,
 } from "./bridge";
 
 type Page = "inicio" | "dispositivos" | "configuracoes";
@@ -30,6 +37,12 @@ export function App() {
   const [enrolling, setEnrolling] = useState(false);
   const [registering, setRegistering] = useState(false);
   const [presenceActive, setPresenceActive] = useState(false);
+  const [requesting, setRequesting] = useState(false);
+  const [outboundSession, setOutboundSession] = useState<SessionReceipt | null>(null);
+  const [hostSession, setHostSession] = useState<SessionReceipt | null>(null);
+  const [inbox, setInbox] = useState<PendingInvitation[]>([]);
+  const [decisionBusy, setDecisionBusy] = useState<string | null>(null);
+  const [ending, setEnding] = useState(false);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -105,6 +118,98 @@ export function App() {
     }
   }
 
+  // Only the authenticated device can retrieve its own outstanding requests.
+  // Requests are refreshed while the user has explicitly enabled presence.
+  useEffect(() => {
+    if (!presenceActive || !backendReady) {
+      setInbox([]);
+      return;
+    }
+    let stopped = false;
+    let fetching = false;
+    async function refresh(): Promise<void> {
+      if (fetching) return;
+      fetching = true;
+      try {
+        const received = await pendingInvitations();
+        if (!stopped) setInbox(received);
+      } catch {
+        if (!stopped) setInbox([]);
+      } finally {
+        fetching = false;
+      }
+    }
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 4_000);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [presenceActive, backendReady]);
+
+  useEffect(() => {
+    if (!outboundSession || outboundSession.status === "rejected" || outboundSession.status === "ended") return;
+    const sessionId = outboundSession.session_id;
+    let stopped = false;
+    async function refresh(): Promise<void> {
+      try {
+        const state = await readSessionState(sessionId);
+        if (!stopped) {
+          setOutboundSession((previous) =>
+            previous?.session_id === sessionId ? { ...previous, status: state } : previous
+          );
+        }
+      } catch {
+        // The server may have restarted: never show an inferred approval.
+      }
+    }
+    const timer = window.setInterval(() => void refresh(), 3_000);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [outboundSession?.session_id, outboundSession?.status]);
+
+  async function sendInvitation(): Promise<void> {
+    if (!presenceActive || requesting) return;
+    setRequesting(true);
+    try {
+      const result = await requestSupport(target.trim());
+      setOutboundSession(result);
+      setFeedback("Solicitação de negociação enviada. Aguarde a autorização no host.");
+    } catch (error: unknown) {
+      setFeedback(error instanceof Error ? error.message : "Falha ao solicitar sessão.");
+    } finally {
+      setRequesting(false);
+    }
+  }
+
+  async function respondToInvitation(sessionId: string, approve: boolean): Promise<void> {
+    if (decisionBusy) return;
+    setDecisionBusy(sessionId);
+    try {
+      const result = await decideInvitation(sessionId, approve);
+      setInbox((previous) => previous.filter((item) => item.session_id !== sessionId));
+      if (approve) setHostSession(result);
+      setFeedback(approve
+        ? "Negociação autorizada. Compartilhamento de tela ainda não está implementado."
+        : "Solicitação recusada com sucesso.");
+    } catch (error: unknown) {
+      setFeedback(error instanceof Error ? error.message : "Não foi possível responder ao convite.");
+    } finally {
+      setDecisionBusy(null);
+    }
+  }
+
+  async function closeSession(sessionId: string): Promise<void> {
+    if (ending) return;
+    setEnding(true);
+    try {
+      const result = await terminateSession(sessionId);
+      if (outboundSession?.session_id === sessionId) setOutboundSession(result);
+      if (hostSession?.session_id === sessionId) setHostSession(null);
+      setFeedback("Negociação encerrada e permissões revogadas.");
+    } catch (error: unknown) {
+      setFeedback(error instanceof Error ? error.message : "Não foi possível encerrar a sessão.");
+    } finally {
+      setEnding(false);
+    }
+  }
+
   async function copyId(): Promise<void> {
     if (!status?.device_id) return;
     try {
@@ -117,7 +222,8 @@ export function App() {
 
   const hasIdentity = Boolean(status?.device_id);
   const hostAvailable = Boolean(status?.host_service_available);
-  const mayConnect = hasIdentity && backendReady && hostAvailable && target.trim().length > 0;
+  const mayConnect = hasIdentity && backendReady && presenceActive && target.trim().length > 0
+    && !requesting && (!outboundSession || outboundSession.status === "rejected" || outboundSession.status === "ended");
 
   return (
     <div className="app-shell">
@@ -207,12 +313,55 @@ export function App() {
                 <input id="target" placeholder="Digite o ID do equipamento" autoComplete="off"
                   value={target} onChange={(e) => setTarget(e.target.value.slice(0, 128))} />
                 <button className="primary connect" type="button" disabled={!mayConnect}
-                  onClick={() => setFeedback("O fluxo de conexão criptografada ainda está em desenvolvimento.")}>
-                  <span aria-hidden="true">↗</span> Conectar
+                  onClick={() => void sendInvitation()}>
+                  <span aria-hidden="true">↗</span> {requesting ? "Solicitando..." : "Solicitar autorização"}
                 </button>
-                <div className="foot-note">Conexões serão iniciadas somente após autorização do dispositivo.</div>
+                <div className="foot-note">Somente negociação de sessão. Vídeo, áudio e controle remoto ainda não estão disponíveis.</div>
+                {outboundSession && (
+                  <div className="foot-note" role="status">
+                    <strong>Estado:</strong> {
+                      outboundSession.status === "awaiting_consent" ? "Aguardando aprovação" :
+                      outboundSession.status === "active" ? "Aprovado (sem transmissão de tela)" :
+                      outboundSession.status === "rejected" ? "Recusado pelo host" : "Encerrado"
+                    }
+                    {(outboundSession.status === "awaiting_consent" || outboundSession.status === "active") && (
+                      <button className="secondary" type="button" disabled={ending}
+                        onClick={() => void closeSession(outboundSession.session_id)}>Cancelar / encerrar</button>
+                    )}
+                  </div>
+                )}
               </section>
             </div>
+            {presenceActive && (
+              <section className="panel recent-panel" aria-labelledby="inbox-heading">
+                <div className="section-title"><div className="card-icon muted">✓</div>
+                  <div><h2 id="inbox-heading">Solicitações recebidas</h2>
+                  <p>Apenas pedidos autenticados destinados a este dispositivo aparecem aqui.</p></div>
+                </div>
+                {inbox.length === 0 ? <p className="foot-note">Nenhuma solicitação aguardando autorização.</p> :
+                  inbox.map((invitation) => (
+                    <div className="setting-row" key={invitation.session_id}>
+                      <div>
+                        <strong>Operador: {invitation.operator}</strong>
+                        <p>Permissões solicitadas: {invitation.requested.join(", ")}. O aceite não inicia transmissão de tela.</p>
+                      </div>
+                      <div className="input-group">
+                        <button className="secondary" type="button" disabled={decisionBusy !== null}
+                          onClick={() => void respondToInvitation(invitation.session_id, false)}>Recusar</button>
+                        <button className="primary" type="button" disabled={decisionBusy !== null}
+                          onClick={() => void respondToInvitation(invitation.session_id, true)}>Autorizar negociação</button>
+                      </div>
+                    </div>
+                  ))
+                }
+                {hostSession && hostSession.status === "active" && (
+                  <div className="foot-note" role="status">
+                    Negociação autorizada, sem captura. <button className="secondary" type="button"
+                      disabled={ending} onClick={() => void closeSession(hostSession.session_id)}>Encerrar autorização</button>
+                  </div>
+                )}
+              </section>
+            )}
             <section className="panel recent-panel">
               <div className="section-title"><div className="card-icon muted">▤</div>
                 <div><h2>Conexões recentes</h2><p>Seus dispositivos aparecerão aqui quando houver sessões reais.</p></div></div>
