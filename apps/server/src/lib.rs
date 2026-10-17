@@ -41,6 +41,11 @@ const MAX_REGISTERED_DEVICES: usize = 256;
 const MAX_STORED_SESSIONS: usize = 512;
 const MAX_PENDING_PER_OPERATOR: usize = 8;
 const MAX_PENDING_PER_HOST: usize = 16;
+const MAX_CHAT_SESSIONS: usize = 32;
+const MAX_CHAT_MESSAGES: usize = 40;
+const MAX_CHAT_TEXT_BYTES: usize = 2_048;
+const MAX_CHAT_TEXT_CHARS: usize = 500;
+const MIN_CHAT_INTERVAL_MS: u64 = 400;
 
 #[derive(Default)]
 pub struct AppState {
@@ -52,6 +57,8 @@ pub struct AppState {
     // Never persist user input or allow unattended input injection.
     input_queues: Mutex<HashMap<SessionId, InputQueue>>,
     keyboard_queues: Mutex<HashMap<SessionId, KeyboardQueue>>,
+    // Bounded, ephemeral, consented session chat. Never persisted or logged.
+    chat_history: Mutex<HashMap<SessionId, ChatHistory>>,
     nonce_window: NonceWindow,
 }
 
@@ -310,6 +317,11 @@ async fn create_session(
             .lock()
             .map_err(|_| ApiError::Unavailable)?
             .retain(|id, _| live.contains(id));
+        state
+            .chat_history
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
+            .retain(|id, _| live.contains(id));
     }
     if sessions.len() >= MAX_STORED_SESSIONS {
         return Err(ApiError::RateLimited);
@@ -409,6 +421,123 @@ async fn active_authorizations(
     }
     active.sort_by_key(|entry| entry.expires_at_ms);
     Ok(Json(active))
+}
+
+
+#[derive(Debug, Clone, Serialize)]
+struct ChatMessage {
+    sequence: u64,
+    sender: DeviceId,
+    text: String,
+    sent_at_ms: u64,
+}
+
+#[derive(Default)]
+struct ChatHistory {
+    messages: VecDeque<ChatMessage>,
+    last_posted_at: HashMap<DeviceId, u64>,
+    sequence: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChatInput {
+    text: String,
+}
+
+/// Only participants of an active session with explicit Chat permission may
+/// read/send. The chat is independent from mouse and screen delivery switches.
+fn authorized_chat(
+    machine: &mut SessionMachine,
+    actor: DeviceId,
+    now: u64,
+) -> Result<(), ApiError> {
+    machine.expire(now);
+    let member = machine
+        .participants()
+        .is_some_and(|(host, operator)| actor == host || actor == operator);
+    if !member || !machine.permits(Capability::Chat, now) {
+        return Err(ApiError::Forbidden);
+    }
+    Ok(())
+}
+
+/// Text messages are short-lived in RAM, bound to authenticated peers, and
+/// never saved to logs, files, or a database by this development server.
+async fn post_chat(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<(StatusCode, Json<ChatMessage>), ApiError> {
+    let path = format!("/v1/sessions/{id}/chat");
+    let actor = authenticated(&state, &headers, "POST", &path, &body)?;
+    known(&state, actor)?;
+    let input: ChatInput = serde_json::from_slice(&body).map_err(|_| ApiError::Invalid)?;
+    let text = input.text.trim();
+    if text.is_empty()
+        || text.len() > MAX_CHAT_TEXT_BYTES
+        || text.chars().count() > MAX_CHAT_TEXT_CHARS
+        || text.chars().any(|c| c.is_control() && c != '\n')
+    {
+        return Err(ApiError::Invalid);
+    }
+    let now = now_ms();
+    let session_id = SessionId(id);
+    let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
+    let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
+    authorized_chat(machine, actor, now)?;
+    let mut chats = state.chat_history.lock().map_err(|_| ApiError::Unavailable)?;
+    // Reclaim memory when sessions expire, are revoked, or have ended.
+    chats.retain(|key, _| {
+        sessions
+            .get(key)
+            .is_some_and(|entry| entry.permits(Capability::Chat, now))
+    });
+    if !chats.contains_key(&session_id) && chats.len() >= MAX_CHAT_SESSIONS {
+        return Err(ApiError::RateLimited);
+    }
+    let history = chats.entry(session_id).or_default();
+    if history.last_posted_at.get(&actor).is_some_and(|last| {
+        now.saturating_sub(*last) < MIN_CHAT_INTERVAL_MS
+    }) {
+        return Err(ApiError::RateLimited);
+    }
+    history.last_posted_at.insert(actor, now);
+    history.sequence = history.sequence.saturating_add(1);
+    let message = ChatMessage {
+        sequence: history.sequence,
+        sender: actor,
+        text: text.to_owned(),
+        sent_at_ms: now,
+    };
+    if history.messages.len() == MAX_CHAT_MESSAGES {
+        history.messages.pop_front();
+    }
+    history.messages.push_back(message.clone());
+    Ok((StatusCode::CREATED, Json(message)))
+}
+
+async fn list_chat(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ChatMessage>>, ApiError> {
+    let path = format!("/v1/sessions/{id}/chat");
+    let actor = authenticated(&state, &headers, "GET", &path, &[])?;
+    known(&state, actor)?;
+    let now = now_ms();
+    let session_id = SessionId(id);
+    let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
+    let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
+    authorized_chat(machine, actor, now)?;
+    let history = state.chat_history.lock().map_err(|_| ApiError::Unavailable)?;
+    Ok(Json(
+        history
+            .get(&session_id)
+            .map(|entry| entry.messages.iter().cloned().collect())
+            .unwrap_or_default(),
+    ))
 }
 
 struct StoredFrame {
@@ -857,6 +986,11 @@ async fn terminate(
         .lock()
         .map_err(|_| ApiError::Unavailable)?
         .remove(&session_id);
+    state
+        .chat_history
+        .lock()
+        .map_err(|_| ApiError::Unavailable)?
+        .remove(&session_id);
     Ok(Json(SessionResponse {
         session_id,
         status: "ended",
@@ -896,6 +1030,13 @@ async fn revoke(
     if ended || input.capability == Capability::Keyboard || input.capability == Capability::Screen {
         state
             .keyboard_queues
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
+            .remove(&session_id);
+    }
+    if ended || input.capability == Capability::Chat {
+        state
+            .chat_history
             .lock()
             .map_err(|_| ApiError::Unavailable)?
             .remove(&session_id);
@@ -954,6 +1095,11 @@ async fn get_session(
             .lock()
             .map_err(|_| ApiError::Unavailable)?
             .remove(&SessionId(id));
+        state
+            .chat_history
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
+            .remove(&SessionId(id));
     }
     let value = match machine.state() {
         SessionState::AwaitingConsent(_) => PublicState::AwaitingConsent,
@@ -1005,6 +1151,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/v1/sessions/{id}/keyboard",
             get(dequeue_keyboard).post(enqueue_keyboard),
         )
+        .route("/v1/sessions/{id}/chat", get(list_chat).post(post_chat))
         .route("/v1/sessions/{id}/decision", post(decide))
         .route("/v1/sessions/{id}/revoke", post(revoke))
         .with_state(state)
