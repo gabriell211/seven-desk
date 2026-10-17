@@ -10,6 +10,9 @@ use uuid::Uuid;
 
 pub const PROTOCOL_VERSION: u16 = 1;
 
+/// Upper bound on the lifetime of an accepted remote session.
+pub const MAX_ACTIVE_SESSION_MS: u64 = 8 * 60 * 60 * 1_000;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct DeviceId(pub Uuid);
@@ -71,6 +74,7 @@ pub enum SessionState {
     Active {
         request: SessionRequest,
         granted: BTreeSet<Capability>,
+        session_deadline_ms: u64,
     },
     Rejected,
     Ended,
@@ -99,6 +103,7 @@ pub enum ProtocolError {
 #[derive(Clone, Debug, Default)]
 pub struct SessionMachine {
     state: SessionState,
+    participants: Option<(DeviceId, DeviceId)>,
 }
 
 impl Default for SessionState {
@@ -112,11 +117,17 @@ impl SessionMachine {
         &self.state
     }
 
+    /// The participants remain known even after rejection or termination.
+    pub fn participants(&self) -> Option<(DeviceId, DeviceId)> {
+        self.participants
+    }
+
     pub fn request(&mut self, request: SessionRequest, now_ms: u64) -> Result<(), ProtocolError> {
         if self.state != SessionState::Idle {
             return Err(ProtocolError::InvalidTransition);
         }
         request.validate(now_ms)?;
+        self.participants = Some((request.host, request.operator));
         self.state = SessionState::AwaitingConsent(request);
         Ok(())
     }
@@ -143,6 +154,7 @@ impl SessionMachine {
         self.state = SessionState::Active {
             request: request.clone(),
             granted,
+            session_deadline_ms: now_ms.saturating_add(MAX_ACTIVE_SESSION_MS),
         };
         Ok(())
     }
@@ -159,7 +171,9 @@ impl SessionMachine {
     }
 
     pub fn revoke(&mut self, actor: DeviceId, permission: Capability) -> Result<(), ProtocolError> {
-        let SessionState::Active { request, granted } = &mut self.state else {
+        let SessionState::Active {
+            request, granted, ..
+        } = &mut self.state else {
             return Err(ProtocolError::InvalidTransition);
         };
         if actor != request.host {
@@ -186,9 +200,11 @@ impl SessionMachine {
 
     pub fn expire(&mut self, now_ms: u64) -> bool {
         let expired = match &self.state {
-            SessionState::AwaitingConsent(r) | SessionState::Active { request: r, .. } => {
-                r.expires_at_ms <= now_ms
-            }
+            SessionState::AwaitingConsent(request) => request.expires_at_ms <= now_ms,
+            SessionState::Active {
+                session_deadline_ms,
+                ..
+            } => *session_deadline_ms <= now_ms,
             _ => false,
         };
         if expired {
@@ -200,8 +216,11 @@ impl SessionMachine {
     pub fn permits(&self, capability: Capability, now_ms: u64) -> bool {
         matches!(
             &self.state,
-            SessionState::Active { request, granted }
-                if request.expires_at_ms > now_ms && granted.contains(&capability)
+            SessionState::Active {
+                granted,
+                session_deadline_ms,
+                ..
+            } if *session_deadline_ms > now_ms && granted.contains(&capability)
         )
     }
 }
@@ -230,7 +249,9 @@ mod tests {
             .unwrap();
         assert!(sm.permits(Capability::Screen, 200));
         assert!(!sm.permits(Capability::Input, 200));
-        assert!(!sm.permits(Capability::Screen, 2_001));
+        // Invite expiry is not the expiry of an already accepted session.
+        assert!(sm.permits(Capability::Screen, 2_001));
+        assert!(!sm.permits(Capability::Screen, 200 + MAX_ACTIVE_SESSION_MS));
     }
 
     #[test]
@@ -268,11 +289,23 @@ mod tests {
     }
 
     #[test]
+    fn active_session_expires_on_its_own_deadline() {
+        let r = request();
+        let mut sm = SessionMachine::default();
+        sm.request(r.clone(), 100).unwrap();
+        sm.accept(r.host, BTreeSet::from([Capability::Screen]), 200).unwrap();
+        assert!(!sm.expire(2_001));
+        assert!(sm.expire(200 + MAX_ACTIVE_SESSION_MS));
+        assert!(!sm.permits(Capability::Screen, 200 + MAX_ACTIVE_SESSION_MS));
+    }
+
+    #[test]
     fn denied_request_never_becomes_active() {
         let r = request();
         let mut sm = SessionMachine::default();
         sm.request(r.clone(), 100).unwrap();
         sm.reject(r.host).unwrap();
+        assert_eq!(sm.participants(), Some((r.host, r.operator)));
         assert!(!sm.permits(Capability::Screen, 100));
         assert!(matches!(sm.state(), SessionState::Rejected));
     }

@@ -53,7 +53,7 @@ seven-desk/request/v1
 
 A chave identifica o dispositivo por UUID derivado do primeiro bloco de 16 bytes de SHA-256 da chave pública. O servidor verifica timestamp dentro de 60 segundos, validade da assinatura e rejeita reuso de nonce. **Isto é um protocolo inicial de pesquisa, não uma especificação auditada para produção.**
 
-`POST /v1/devices` aceita exatamente `{}` assinado. A sessão requer ambos os dispositivos cadastrados e operador autenticado. A decisão é exclusivamente do host. O canal de mídia **não existe nesta entrega**, e o backend informa `production_ready: false`.
+`POST /v1/devices` aceita exatamente `{}` assinado. A sessão requer ambos os dispositivos cadastrados e operador autenticado. A decisão é exclusivamente do host. Após o aceite, a sessão tem prazo próprio (até 8 horas inicialmente) separado da expiração do convite. O host pode revogar capacidades por `POST /v1/sessions/{id}/revoke` com assinatura. O canal de mídia **não existe nesta entrega**, e o backend informa `production_ready: false`.
 
 ## O que ainda bloqueia uso real
 
