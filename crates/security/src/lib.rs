@@ -11,6 +11,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 const MAX_CLOCK_SKEW_MS: u64 = 60_000;
+const MAX_TRACKED_NONCES: usize = 8_192;
 // A signed PNG frame may be as large as 2 MiB. HTTP handlers still enforce
 // their own, usually much smaller, per-endpoint limits before verification.
 const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
@@ -35,6 +36,8 @@ pub enum AuthError {
     Oversized,
     #[error("internal verification state unavailable")]
     Internal,
+    #[error("replay protection capacity reached")]
+    CapacityExceeded,
 }
 
 #[derive(Default)]
@@ -100,6 +103,12 @@ impl NonceWindow {
         seen.retain(|_, timestamp| now_ms.saturating_sub(*timestamp) <= MAX_CLOCK_SKEW_MS * 2);
         if seen.contains_key(&(device_id, nonce)) {
             return Err(AuthError::Replay);
+        }
+        // Each valid public key can be self-issued. Without a cap, an attacker
+        // could force unbounded memory use by signing unlimited fresh nonces.
+        // Fail closed rather than evicting fresh replay evidence.
+        if seen.len() >= MAX_TRACKED_NONCES {
+            return Err(AuthError::CapacityExceeded);
         }
         seen.insert((device_id, nonce), now_ms);
         Ok(())
@@ -195,5 +204,26 @@ mod tests {
             ),
             Err(AuthError::Oversized)
         );
+    }
+    #[test]
+    fn replay_cache_fails_closed_at_capacity_and_recovers_after_expiry() {
+        let window = NonceWindow::default();
+        let key = SigningKey::from_bytes(&[55_u8; 32]);
+        let actor = device_id(&key.verifying_key());
+        let now = 20_000;
+        let prior = Uuid::new_v4();
+        window.use_once(actor, prior, now).unwrap();
+        for _ in 1..MAX_TRACKED_NONCES {
+            window.use_once(actor, Uuid::new_v4(), now).unwrap();
+        }
+        assert_eq!(window.use_once(actor, prior, now), Err(AuthError::Replay));
+        assert_eq!(
+            window.use_once(actor, Uuid::new_v4(), now),
+            Err(AuthError::CapacityExceeded)
+        );
+        window
+            .use_once(actor, Uuid::new_v4(), now + MAX_CLOCK_SKEW_MS * 2 + 1)
+            .unwrap();
+        assert_eq!(window.seen.lock().unwrap().len(), 1);
     }
 }

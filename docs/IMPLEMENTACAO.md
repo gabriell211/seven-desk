@@ -112,3 +112,9 @@ As verificações locais com Rust 1.90 passaram: formatação, Clippy sem avisos
 6. Escolha explícita da licença do Seven Desk; o código provisório usa `UNLICENSED`.
 
 Apenas uma issue pode ser fechada quando **todos** seus critérios de aceitação estiverem evidenciados em PR, CI e testes exigidos. Não marcar o MVP como pronto apenas por conseguir abrir a interface.
+
+## Defesa contra abuso do servidor de desenvolvimento — 17/10/2026
+
+O registro assinado foi limitado a **256 identidades online** simultâneas (TTL de presença existente: 90 segundos), preservando a capacidade de renovar uma identidade já registrada. Convites pendentes são limitados a **8 por operador** e **16 por host**, com contagem após expiração de convites, evitando que um operador preencha a fila do host. O control plane mantém no máximo **512 estados de sessão**; quando a capacidade é alcançada, somente recibos terminados/rejeitados são reciclados e quadros/filas associados são eliminados. Sessões ativas e convites válidos nunca são desalocados por essa limpeza. Excesso retorna `429 rate_limited`.
+
+A janela de prevenção de replay mantém no máximo **8192 nonces** válidos; ao atingir o limite, recusa novos pedidos autenticados com HTTP 429, sem descartar evidências ainda válidas. Isso é mitigação de esgotamento de memória **em uma instância experimental**, não proteção completa contra ataques distribuídos, persistência de estado ou substituto de rate limit por origem/chave/tenant em ambiente de produção. Testes Rust cobrem esgotamento, renovação, limites entre operadores, recuperação de convite expirado e preservação de sessão ativa durante limpeza de recibos.
