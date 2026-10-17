@@ -807,7 +807,8 @@ mod tests {
         let body = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE)
             .await
             .unwrap();
-        assert!(body.as_ref().windows(b"\\"online\\":true".len()).any(|w| w == b"\\"online\\":true"));
+        let presence: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(presence["online"], true);
 
         let heartbeat = service
             .clone()
