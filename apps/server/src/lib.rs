@@ -423,7 +423,6 @@ async fn active_authorizations(
     Ok(Json(active))
 }
 
-
 #[derive(Debug, Clone, Serialize)]
 struct ChatMessage {
     sequence: u64,
@@ -487,7 +486,10 @@ async fn post_chat(
     let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
     let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
     authorized_chat(machine, actor, now)?;
-    let mut chats = state.chat_history.lock().map_err(|_| ApiError::Unavailable)?;
+    let mut chats = state
+        .chat_history
+        .lock()
+        .map_err(|_| ApiError::Unavailable)?;
     // Reclaim memory when sessions expire, are revoked, or have ended.
     chats.retain(|key, _| {
         sessions
@@ -498,9 +500,11 @@ async fn post_chat(
         return Err(ApiError::RateLimited);
     }
     let history = chats.entry(session_id).or_default();
-    if history.last_posted_at.get(&actor).is_some_and(|last| {
-        now.saturating_sub(*last) < MIN_CHAT_INTERVAL_MS
-    }) {
+    if history
+        .last_posted_at
+        .get(&actor)
+        .is_some_and(|last| now.saturating_sub(*last) < MIN_CHAT_INTERVAL_MS)
+    {
         return Err(ApiError::RateLimited);
     }
     history.last_posted_at.insert(actor, now);
@@ -531,7 +535,10 @@ async fn list_chat(
     let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
     let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
     authorized_chat(machine, actor, now)?;
-    let history = state.chat_history.lock().map_err(|_| ApiError::Unavailable)?;
+    let history = state
+        .chat_history
+        .lock()
+        .map_err(|_| ApiError::Unavailable)?;
     Ok(Json(
         history
             .get(&session_id)
