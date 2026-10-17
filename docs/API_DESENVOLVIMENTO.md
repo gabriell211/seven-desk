@@ -28,6 +28,7 @@ A mensagem canônica assinada é formada pelas linhas `seven-desk/request/v1`, m
 | `POST` | `/v1/sessions` | Solicitar sessão somente com operador e host ativos, assinatura e escopo tipado |
 | `GET` | `/v1/sessions/inbox` | Consultar convites pendentes somente do host autenticado |
 | `GET` | `/v1/sessions/host/active` | Listar somente autorizações ativas do host autenticado para revogar após reabrir o aplicativo |
+| `GET` | `/v1/sessions/operator/active` | Retornar somente sessões ativas do operador autenticado, mesmo após reiniciar a janela |
 | `POST` | `/v1/sessions/{id}/frame` | Host autorizado publica o último quadro PNG, limitado a 2 MiB |
 | `GET` | `/v1/sessions/{id}/frame` | Operador da sessão autorizada lê o quadro recente, com `Cache-Control: no-store` |
 | `GET` | `/v1/sessions/{id}` | Consultar estado quando autenticado e participante |
