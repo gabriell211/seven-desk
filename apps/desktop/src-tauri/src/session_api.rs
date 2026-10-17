@@ -86,6 +86,7 @@ async fn signed_request(method: Method, path: String, body: Vec<u8>) -> Result<V
     .await
     .map_err(|_| "Falha ao acessar credenciais nativas".to_string())??;
 
+    let upload_frame = method == Method::POST && path.ends_with("/frame");
     let max_response = if method == Method::GET && path.ends_with("/frame") {
         MAX_FRAME_BYTES
     } else {
@@ -102,7 +103,7 @@ async fn signed_request(method: Method, path: String, body: Vec<u8>) -> Result<V
         .header("x-seven-signature", proof.signature_hex)
         .header("x-seven-nonce", proof.nonce.to_string())
         .header("x-seven-timestamp", proof.timestamp_ms.to_string())
-        .header("content-type", if path.ends_with("/frame") && method == Method::POST {
+        .header("content-type", if upload_frame {
             "image/png"
         } else {
             "application/json"
