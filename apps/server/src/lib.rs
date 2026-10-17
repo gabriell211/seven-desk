@@ -189,6 +189,53 @@ struct SessionResponse {
     status: &'static str,
 }
 
+#[derive(Serialize)]
+struct PendingInvitation {
+    session_id: SessionId,
+    operator: DeviceId,
+    requested: BTreeSet<Capability>,
+    expires_at_ms: u64,
+}
+
+/// The authenticated host can inspect only its own outstanding invitations.
+/// Reading the inbox never grants permissions or starts a remote session.
+async fn pending_invitations(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<PendingInvitation>>, ApiError> {
+    let host = authenticated(
+        &state,
+        &headers,
+        "GET",
+        "/v1/sessions/inbox",
+        &[],
+    )?;
+    known(&state, host)?;
+
+    let now = now_ms();
+    let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
+    let mut pending = Vec::new();
+
+    for machine in sessions.values_mut() {
+        // Expire invitations before exposure; rejected and ended requests are
+        // deliberately excluded even when their participants are retained.
+        machine.expire(now);
+        if let SessionState::AwaitingConsent(request) = machine.state() {
+            if request.host == host {
+                pending.push(PendingInvitation {
+                    session_id: request.session_id,
+                    operator: request.operator,
+                    requested: request.requested.clone(),
+                    expires_at_ms: request.expires_at_ms,
+                });
+            }
+        }
+    }
+
+    pending.sort_by_key(|item| item.expires_at_ms);
+    Ok(Json(pending))
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Decision {
@@ -328,6 +375,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/v1/devices", post(register))
         .route("/v1/sessions", post(create_session))
+        .route("/v1/sessions/inbox", get(pending_invitations))
         .route("/v1/sessions/{id}", get(get_session).delete(terminate))
         .route("/v1/sessions/{id}/decision", post(decide))
         .route("/v1/sessions/{id}/revoke", post(revoke))
@@ -494,6 +542,167 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(payload.as_ref(), b"\"ended\"");
+    }
+
+    #[tokio::test]
+    async fn pending_inbox_is_scoped_to_target_host_and_respects_rejection() {
+        let service = router(Arc::new(AppState::default()));
+        let operator = SigningKey::from_bytes(&[23_u8; 32]);
+        let host = SigningKey::from_bytes(&[24_u8; 32]);
+        let other = SigningKey::from_bytes(&[25_u8; 32]);
+
+        for key in [&operator, &host, &other] {
+            let response = service
+                .clone()
+                .oneshot(signed_request(key, "POST", "/v1/devices", b"{}".to_vec()))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        let session_id = SessionId(Uuid::new_v4());
+        let invitation = SessionRequest {
+            protocol_version: seven_protocol::PROTOCOL_VERSION,
+            session_id,
+            operator: device_id(&operator.verifying_key()),
+            host: device_id(&host.verifying_key()),
+            requested: BTreeSet::from([Capability::Screen]),
+            expires_at_ms: now_ms() + 30_000,
+        };
+
+        let response = service
+            .clone()
+            .oneshot(signed_request(
+                &operator,
+                "POST",
+                "/v1/sessions",
+                serde_json::to_vec(&invitation).unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        for key in [&operator, &other] {
+            let response = service
+                .clone()
+                .oneshot(signed_request(key, "GET", "/v1/sessions/inbox", Vec::new()))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE).await.unwrap();
+            assert_eq!(body.as_ref(), b"[]");
+        }
+
+        let response = service
+            .clone()
+            .oneshot(signed_request(
+                &host,
+                "GET",
+                "/v1/sessions/inbox",
+                Vec::new(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE).await.unwrap();
+        let pending: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let entries = pending.as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["session_id"], session_id.0.to_string());
+        assert_eq!(entries[0]["operator"], invitation.operator.0.to_string());
+        assert_eq!(entries[0]["requested"], serde_json::json!(["screen"]));
+
+        let decision = format!("/v1/sessions/{}/decision", session_id.0);
+        let response = service
+            .clone()
+            .oneshot(signed_request(
+                &host,
+                "POST",
+                &decision,
+                serde_json::to_vec(&serde_json::json!({"approve": false})).unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = service
+            .clone()
+            .oneshot(signed_request(
+                &host,
+                "GET",
+                "/v1/sessions/inbox",
+                Vec::new(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE).await.unwrap();
+        assert_eq!(body.as_ref(), b"[]");
+    }
+
+    #[tokio::test]
+    async fn pending_inbox_rejects_unsigned_access_and_expired_requests() {
+        let state = Arc::new(AppState::default());
+        let host = SigningKey::from_bytes(&[26_u8; 32]);
+        let operator = SigningKey::from_bytes(&[27_u8; 32]);
+        let service = router(state.clone());
+
+        let response = service
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/sessions/inbox")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = service
+            .clone()
+            .oneshot(signed_request(&host, "GET", "/v1/sessions/inbox", Vec::new()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let registration = service
+            .clone()
+            .oneshot(signed_request(&host, "POST", "/v1/devices", b"{}".to_vec()))
+            .await
+            .unwrap();
+        assert_eq!(registration.status(), StatusCode::OK);
+
+        // Build an already-expired invitation directly in test state.
+        let expired = SessionRequest {
+            protocol_version: seven_protocol::PROTOCOL_VERSION,
+            session_id: SessionId(Uuid::new_v4()),
+            operator: device_id(&operator.verifying_key()),
+            host: device_id(&host.verifying_key()),
+            requested: BTreeSet::from([Capability::Screen]),
+            expires_at_ms: 1,
+        };
+        let mut machine = SessionMachine::default();
+        machine.request(expired.clone(), 0).unwrap();
+        state.sessions.lock().unwrap().insert(expired.session_id, machine);
+
+        let response = service
+            .clone()
+            .oneshot(signed_request(
+                &host,
+                "GET",
+                "/v1/sessions/inbox",
+                Vec::new(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE).await.unwrap();
+        assert_eq!(body.as_ref(), b"[]");
+        assert!(matches!(
+            state.sessions.lock().unwrap().get(&expired.session_id).unwrap().state(),
+            SessionState::Ended
+        ));
     }
 
     #[tokio::test]
