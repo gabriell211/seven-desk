@@ -695,7 +695,7 @@ mod tests {
     fn invitation_only_requests_screen_and_has_short_expiry() {
         let operator = Uuid::new_v4();
         let host = Uuid::new_v4();
-        let request = invitation(operator, host, 1_000, false, false).unwrap();
+        let request = invitation(operator, host, 1_000, false, false, false).unwrap();
         assert_eq!(request.operator.0, operator);
         assert_eq!(request.host.0, host);
         assert_eq!(request.expires_at_ms, 121_000);
@@ -708,9 +708,9 @@ mod tests {
     fn mouse_is_never_requested_without_opt_in_and_coordinates_are_bounded() {
         let source = Uuid::new_v4();
         let dest = Uuid::new_v4();
-        let view = invitation(source, dest, 100, false, false).unwrap();
-        let control = invitation(source, dest, 100, true, false).unwrap();
-        let keyboard = invitation(source, dest, 100, false, true).unwrap();
+        let view = invitation(source, dest, 100, false, false, false).unwrap();
+        let control = invitation(source, dest, 100, true, false, false).unwrap();
+        let keyboard = invitation(source, dest, 100, false, true, false).unwrap();
         assert_eq!(view.requested, BTreeSet::from([Capability::Screen]));
         assert_eq!(
             control.requested,
@@ -719,6 +719,11 @@ mod tests {
         assert_eq!(
             keyboard.requested,
             BTreeSet::from([Capability::Screen, Capability::Keyboard])
+        );
+        let chat = invitation(source, dest, 100, false, false, true).unwrap();
+        assert_eq!(
+            chat.requested,
+            BTreeSet::from([Capability::Screen, Capability::Chat])
         );
         assert_eq!(normalized_pointer(0, 1920), 0);
         assert_eq!(normalized_pointer(10_000, 1920), 1919);
@@ -729,7 +734,7 @@ mod tests {
     #[test]
     fn self_invitation_and_invalid_session_ids_fail_closed() {
         let id = Uuid::new_v4();
-        assert!(invitation(id, id, 1_000, true, true).is_err());
+        assert!(invitation(id, id, 1_000, true, true, true).is_err());
         assert!(parse_session_id("not-a-uuid").is_err());
         assert_eq!(parse_session_id(&id.to_string()), Ok(id));
     }
