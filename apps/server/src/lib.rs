@@ -174,9 +174,9 @@ async fn heartbeat(
     let actor = authenticated(&state, &headers, "POST", "/v1/devices/heartbeat", &body)?;
     let now = now_ms();
     let mut devices = state.devices.write().map_err(|_| ApiError::Unavailable)?;
-    if !devices
+    if devices
         .get(&actor)
-        .is_some_and(|expires_at| *expires_at > now)
+        .is_none_or(|expires_at| *expires_at <= now)
     {
         return Err(ApiError::Unauthorized);
     }
