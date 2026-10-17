@@ -52,7 +52,8 @@ pub struct AppState {
     // Never persist user input or allow unattended input injection.
     input_queues: Mutex<HashMap<SessionId, InputQueue>>,
     keyboard_queues: Mutex<HashMap<SessionId, KeyboardQueue>>,
-    nonce_window: NonceWindow,}
+    nonce_window: NonceWindow,
+}
 
 #[derive(Debug)]
 pub enum ApiError {
@@ -2656,5 +2657,4 @@ mod tests {
         assert!(sessions.contains_key(&next.session_id));
         assert_eq!(sessions.len(), 2);
     }
-
 }
