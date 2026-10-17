@@ -111,6 +111,12 @@ export async function terminateSession(sessionId: string): Promise<SessionReceip
   return invoke<SessionReceipt>("end_session", { sessionId });
 }
 
+/** Explicit host control: server stops accepting and clears screen pixels. */
+export async function setScreenDelivery(sessionId: string, enabled: boolean): Promise<void> {
+  if (!isTauri()) throw new Error("Compartilhamento disponível apenas no aplicativo instalado.");
+  return invoke<void>("set_screen_delivery", { sessionId, enabled });
+}
+
 /** Windows host: capture only after explicit user click and host consent. */
 export async function publishManualFrame(sessionId: string): Promise<void> {
   if (!isTauri()) throw new Error("Captura disponível apenas no aplicativo instalado.");
