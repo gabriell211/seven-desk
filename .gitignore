@@ -15,3 +15,4 @@ Thumbs.db
 *.p12
 *.pfx
 **/src-tauri/gen/
+artifacts/qa/
