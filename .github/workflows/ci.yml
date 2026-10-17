@@ -29,6 +29,11 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Unit and API tests
         run: cargo test --workspace --all-targets
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Smoke real backend loopback (no Docker or database)
+        run: npm run smoke:server
 
   desktop-ui:
     name: React TypeScript and static bundle
@@ -92,3 +97,5 @@ jobs:
           node scripts/generate-icons.mjs
       - name: Verify Windows capture implementation compiles
         run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
+      - name: Smoke native backend on clean Windows runner
+        run: npm run smoke:server
