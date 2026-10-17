@@ -55,9 +55,19 @@ A chave identifica o dispositivo por UUID derivado do primeiro bloco de 16 bytes
 
 `POST /v1/devices` aceita exatamente `{}` assinado. A sessão requer ambos os dispositivos cadastrados e operador autenticado. A decisão é exclusivamente do host. Após o aceite, a sessão tem prazo próprio (até 8 horas inicialmente) separado da expiração do convite. O host pode revogar capacidades por `POST /v1/sessions/{id}/revoke` com assinatura. O canal de mídia **não existe nesta entrega**, e o backend informa `production_ready: false`.
 
+## Evolução validada em 17/10/2026
+
+Três entregas adicionais foram integradas à `main` após passar pelos cinco jobs disponíveis nos workflows `Check` e `Seven Desk CI`:
+
+- [PR #78](https://github.com/gabriell211/seven-desk/pull/78): inbox de solicitações autenticadas `GET /v1/sessions/inbox`, restrita ao host, com expiração e rejeição sem exposição a terceiros.
+- [PR #79](https://github.com/gabriell211/seven-desk/pull/79): registro de presença por 90 segundos, heartbeat assinado `POST /v1/devices/heartbeat` e consulta `GET /v1/devices/{id}/presence`; convites são rejeitados para hosts offline.
+- [PR #80](https://github.com/gabriell211/seven-desk/pull/80): Tauri registra e renova a presença via comandos Rust nativos assinados, acionados voluntariamente pela interface; nenhum segredo de assinatura é enviado ao React.
+
+A documentação experimental dos endpoints está em [API_DESENVOLVIMENTO.md](API_DESENVOLVIMENTO.md). O backend continua **local, em memória e não preparado para produção**. Não houve homologação visual ou E2E em duas máquinas; os builds e testes de CI não devem ser apresentados como validação de conexão remota funcional.
+
 ## O que ainda bloqueia uso real
 
-1. Integração de cadastro de identidade assinada no serviço host, revogação/rotação de chaves e operação multi-dispositivo. A identidade local já usa armazenamento seguro, mas ainda não concede acesso remoto.
+1. Implementar serviço host real e permanente, rotação/revogação de identidades e operação multi-dispositivo. A UI já consegue registrar sua presença no servidor local por requisição assinada, mas **isso não habilita controle remoto**.
 2. Authn/authz final, persistência PostgreSQL, limpeza de sessões e proteção contra DoS.
 3. Comunicação de controle protegida ponta a ponta (P2P/relay), captura/codec e teclado/mouse com API nativa.
 4. Serviço do host/IPC e atualização assinada do aplicativo.
