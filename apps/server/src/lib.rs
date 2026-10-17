@@ -7,8 +7,9 @@
 use axum::{
     Json, Router,
     body::Bytes,
+    extract::DefaultBodyLimit,
     extract::{Path, State},
-    http::{HeaderMap, HeaderValue, Method, StatusCode},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -28,11 +29,16 @@ use uuid::Uuid;
 const MAX_INVITATION_MS: u64 = 5 * 60 * 1_000;
 const PRESENCE_TTL_MS: u64 = 90_000;
 const MAX_PAYLOAD_SIZE: usize = 64 * 1_024;
+const MAX_FRAME_BYTES: usize = 2 * 1_024 * 1_024;
+const MAX_CACHED_FRAMES: usize = 8;
+const FRAME_FRESHNESS_MS: u64 = 15_000;
 
 #[derive(Default)]
 pub struct AppState {
     devices: RwLock<HashMap<DeviceId, u64>>,
     sessions: Mutex<HashMap<SessionId, SessionMachine>>,
+    // Experimental single latest-frame buffer. Never persist desktop pixels.
+    frames: Mutex<HashMap<SessionId, StoredFrame>>,
     nonce_window: NonceWindow,
 }
 
@@ -74,7 +80,13 @@ fn authenticated(
     path: &str,
     body: &[u8],
 ) -> Result<DeviceId, ApiError> {
-    if body.len() > MAX_PAYLOAD_SIZE {
+    let max_body =
+        if method == "POST" && path.starts_with("/v1/sessions/") && path.ends_with("/frame") {
+            MAX_FRAME_BYTES
+        } else {
+            MAX_PAYLOAD_SIZE
+        };
+    if body.len() > max_body {
         return Err(ApiError::Invalid);
     }
     let get = |name| -> Result<String, ApiError> {
@@ -329,6 +341,105 @@ async fn active_authorizations(
     Ok(Json(active))
 }
 
+struct StoredFrame {
+    png: Vec<u8>,
+    received_at_ms: u64,
+}
+
+fn valid_png_header(png: &[u8]) -> bool {
+    if png.len() < 33 || png.len() > MAX_FRAME_BYTES || !png.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return false;
+    }
+    if &png[12..16] != b"IHDR"
+        || u32::from_be_bytes(png[8..12].try_into().unwrap_or_default()) != 13
+    {
+        return false;
+    }
+    let width = u32::from_be_bytes(png[16..20].try_into().unwrap_or_default());
+    let height = u32::from_be_bytes(png[20..24].try_into().unwrap_or_default());
+    (1..=8_192).contains(&width) && (1..=8_192).contains(&height)
+}
+
+fn authorized_frame_peer(
+    state: &AppState,
+    actor: DeviceId,
+    id: SessionId,
+    upload: bool,
+    now: u64,
+) -> Result<(), ApiError> {
+    let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
+    let machine = sessions.get_mut(&id).ok_or(ApiError::NotFound)?;
+    machine.expire(now);
+    let Some((host, operator)) = machine.participants() else {
+        return Err(ApiError::Forbidden);
+    };
+    if (upload && actor != host) || (!upload && actor != operator) {
+        return Err(ApiError::Forbidden);
+    }
+    if !machine.permits(Capability::Screen, now) {
+        return Err(ApiError::Forbidden);
+    }
+    Ok(())
+}
+
+/// Explicitly consented host uploads a single PNG frame. This is a local
+/// loopback-only PoC, NOT encrypted remote transport or unattended streaming.
+async fn publish_frame(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<StatusCode, ApiError> {
+    let path = format!("/v1/sessions/{id}/frame");
+    let host = authenticated(&state, &headers, "POST", &path, &body)?;
+    known(&state, host)?;
+    let now = now_ms();
+    authorized_frame_peer(&state, host, SessionId(id), true, now)?;
+    if !valid_png_header(&body) {
+        return Err(ApiError::Invalid);
+    }
+    let mut frames = state.frames.lock().map_err(|_| ApiError::Unavailable)?;
+    frames.retain(|_, frame| now.saturating_sub(frame.received_at_ms) <= FRAME_FRESHNESS_MS);
+    if !frames.contains_key(&SessionId(id)) && frames.len() >= MAX_CACHED_FRAMES {
+        return Err(ApiError::Unavailable);
+    }
+    frames.insert(
+        SessionId(id),
+        StoredFrame {
+            png: body.to_vec(),
+            received_at_ms: now,
+        },
+    );
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Only the authenticated session operator can retrieve a recently uploaded
+/// screen frame; authorization is rechecked after every revocation/expiry.
+async fn read_frame(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let path = format!("/v1/sessions/{id}/frame");
+    let operator = authenticated(&state, &headers, "GET", &path, &[])?;
+    known(&state, operator)?;
+    let now = now_ms();
+    authorized_frame_peer(&state, operator, SessionId(id), false, now)?;
+    let frames = state.frames.lock().map_err(|_| ApiError::Unavailable)?;
+    let frame = frames.get(&SessionId(id)).ok_or(ApiError::NotFound)?;
+    if now.saturating_sub(frame.received_at_ms) > FRAME_FRESHNESS_MS {
+        return Err(ApiError::NotFound);
+    }
+    Ok((
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        frame.png.clone(),
+    )
+        .into_response())
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Decision {
@@ -472,6 +583,12 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/sessions", post(create_session))
         .route("/v1/sessions/inbox", get(pending_invitations))
         .route("/v1/sessions/host/active", get(active_authorizations))
+        .route(
+            "/v1/sessions/{id}/frame",
+            get(read_frame)
+                .post(publish_frame)
+                .layer(DefaultBodyLimit::max(MAX_FRAME_BYTES)),
+        )
         .route("/v1/sessions/{id}", get(get_session).delete(terminate))
         .route("/v1/sessions/{id}/decision", post(decide))
         .route("/v1/sessions/{id}/revoke", post(revoke))
@@ -1073,6 +1190,152 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(raw.as_ref(), b"[]");
+    }
+
+    #[tokio::test]
+    async fn frame_requires_host_consent_and_operator_identity_and_revocation_stops_access() {
+        let service = router(Arc::new(AppState::default()));
+        let operator = SigningKey::from_bytes(&[61_u8; 32]);
+        let host = SigningKey::from_bytes(&[62_u8; 32]);
+        let outsider = SigningKey::from_bytes(&[63_u8; 32]);
+        for key in [&operator, &host, &outsider] {
+            let response = service
+                .clone()
+                .oneshot(signed_request(key, "POST", "/v1/devices", b"{}".to_vec()))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        let id = SessionId(Uuid::new_v4());
+        let invitation = SessionRequest {
+            protocol_version: seven_protocol::PROTOCOL_VERSION,
+            session_id: id,
+            operator: device_id(&operator.verifying_key()),
+            host: device_id(&host.verifying_key()),
+            requested: BTreeSet::from([Capability::Screen]),
+            expires_at_ms: now_ms() + 30_000,
+        };
+        let response = service
+            .clone()
+            .oneshot(signed_request(
+                &operator,
+                "POST",
+                "/v1/sessions",
+                serde_json::to_vec(&invitation).unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let path = format!("/v1/sessions/{}/frame", id.0);
+
+        let mut png = vec![0u8; 33];
+        png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        png[8..12].copy_from_slice(&13u32.to_be_bytes());
+        png[12..16].copy_from_slice(b"IHDR");
+        png[16..20].copy_from_slice(&1u32.to_be_bytes());
+        png[20..24].copy_from_slice(&1u32.to_be_bytes());
+
+        // Never accept a frame before explicit host consent.
+        let denied = service
+            .clone()
+            .oneshot(signed_request(&host, "POST", &path, png.clone()))
+            .await
+            .unwrap();
+        assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+        let approval_path = format!("/v1/sessions/{}/decision", id.0);
+        let approved = service
+            .clone()
+            .oneshot(signed_request(
+                &host,
+                "POST",
+                &approval_path,
+                br#"{"approve":true,"granted":["screen"]}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(approved.status(), StatusCode::OK);
+
+        // Only the host can publish; only the operator can read.
+        for bad in [&operator, &outsider] {
+            let response = service
+                .clone()
+                .oneshot(signed_request(bad, "POST", &path, png.clone()))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        }
+        let malformed = service
+            .clone()
+            .oneshot(signed_request(&host, "POST", &path, b"fake-png".to_vec()))
+            .await
+            .unwrap();
+        assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+        let uploaded = service
+            .clone()
+            .oneshot(signed_request(&host, "POST", &path, png.clone()))
+            .await
+            .unwrap();
+        assert_eq!(uploaded.status(), StatusCode::NO_CONTENT);
+
+        for bad in [&host, &outsider] {
+            let response = service
+                .clone()
+                .oneshot(signed_request(bad, "GET", &path, vec![]))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        }
+        let fetched = service
+            .clone()
+            .oneshot(signed_request(&operator, "GET", &path, vec![]))
+            .await
+            .unwrap();
+        assert_eq!(fetched.status(), StatusCode::OK);
+        assert_eq!(fetched.headers()[header::CONTENT_TYPE], "image/png");
+        assert_eq!(fetched.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(
+            to_bytes(fetched.into_body(), MAX_FRAME_BYTES)
+                .await
+                .unwrap()
+                .as_ref(),
+            png
+        );
+
+        let revoke_path = format!("/v1/sessions/{}/revoke", id.0);
+        let revoked = service
+            .clone()
+            .oneshot(signed_request(
+                &host,
+                "POST",
+                &revoke_path,
+                br#"{"capability":"screen"}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(revoked.status(), StatusCode::OK);
+        for (key, method, body) in [(&host, "POST", png.clone()), (&operator, "GET", vec![])] {
+            let response = service
+                .clone()
+                .oneshot(signed_request(key, method, &path, body))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        }
+    }
+
+    #[test]
+    fn frame_header_rejects_invalid_dimensions_and_large_data() {
+        assert!(!valid_png_header(b"not-a-png"));
+        assert!(!valid_png_header(&vec![0; MAX_FRAME_BYTES + 1]));
+        let mut header = vec![0u8; 33];
+        header[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        header[8..12].copy_from_slice(&13u32.to_be_bytes());
+        header[12..16].copy_from_slice(b"IHDR");
+        assert!(!valid_png_header(&header));
+        header[16..20].copy_from_slice(&1u32.to_be_bytes());
+        header[20..24].copy_from_slice(&8_193u32.to_be_bytes());
+        assert!(!valid_png_header(&header));
     }
 
     #[tokio::test]
