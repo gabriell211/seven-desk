@@ -32,6 +32,12 @@ A mensagem canônica assinada é formada pelas linhas `seven-desk/request/v1`, m
 | `POST` | `/v1/sessions/{id}/revoke` | Host revogar uma capacidade ativa |
 | `DELETE` | `/v1/sessions/{id}` | Participante autorizado encerrar |
 
+## Aplicativo desktop pré-alfa
+
+No aplicativo Tauri instalado, o usuário pode **Ativar** uma identidade segura e escolher **Registrar no servidor local**. O registro é assinado no processo Rust, não no React. Com a janela aberta e a presença ativada, o frontend solicita um heartbeat nativo a cada 30 segundos. Ao falhar, o estado muda para inativo e exige novo registro manual.
+
+O comando nativo usa exclusivamente o endpoint de desenvolvimento `http://127.0.0.1:43821`, com timeout de 5 segundos e assinatura nova por requisição. Não há configuração para expor credenciais a JavaScript nem para conectar a servidores arbitrários. O aplicativo ainda **não inicia sessão remota**, pois captura e serviço do host permanecem pendentes.
+
 ## Presença (experimental)
 
 Após registrar a identidade, ela fica marcada online por **90 segundos**. Um heartbeat com assinatura válida atualiza a validade. Integrações futuras deverão enviar heartbeats em cadência inferior ao TTL (por exemplo, a cada 30 segundos). Se expirar, o host é tratado offline e não pode receber novas solicitações até se registrar novamente com prova assinada. Um heartbeat atrasado é rejeitado, sem renovação implícita.
