@@ -13,6 +13,8 @@ Esta documentação descreve o **código que está começando a existir**. Não 
 - `.github/workflows/ci.yml`: formato, lint, testes Rust, TypeScript/build e checagem nativa Tauri.
 - `.github/workflows/installers.yml`: geração **manual de pacotes de QA não assinados**. Não são releases finais.
 
+Para instalação local reproduzível sem Docker, fixture de teste, validação HTTP real do backend e preview React em ambiente limpo, consulte **[Ambiente local](AMBIENTE_LOCAL.md)**. O smoke comprova bootstrap e controles básicos, não acesso remoto de produção.
+
 ## Pré-requisitos de desenvolvimento
 
 - Rust 1.90.0 e Cargo.
