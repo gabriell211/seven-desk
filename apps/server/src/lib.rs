@@ -214,15 +214,15 @@ async fn pending_invitations(
         // Expire invitations before exposure; rejected and ended requests are
         // deliberately excluded even when their participants are retained.
         machine.expire(now);
-        if let SessionState::AwaitingConsent(request) = machine.state() {
-            if request.host == host {
-                pending.push(PendingInvitation {
-                    session_id: request.session_id,
-                    operator: request.operator,
-                    requested: request.requested.clone(),
-                    expires_at_ms: request.expires_at_ms,
-                });
-            }
+        if let SessionState::AwaitingConsent(request) = machine.state()
+            && request.host == host
+        {
+            pending.push(PendingInvitation {
+                session_id: request.session_id,
+                operator: request.operator,
+                requested: request.requested.clone(),
+                expires_at_ms: request.expires_at_ms,
+            });
         }
     }
 
