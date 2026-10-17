@@ -77,12 +77,16 @@ pub fn verify(
         return Err(AuthError::ClockSkew);
     }
     let key_bytes = hex::decode(&proof.public_key_hex).map_err(|_| AuthError::InvalidSignature)?;
-    let key: [u8; 32] = key_bytes.try_into().map_err(|_| AuthError::InvalidSignature)?;
+    let key: [u8; 32] = key_bytes
+        .try_into()
+        .map_err(|_| AuthError::InvalidSignature)?;
     let verifier = VerifyingKey::from_bytes(&key).map_err(|_| AuthError::InvalidSignature)?;
     let sig_bytes = hex::decode(&proof.signature_hex).map_err(|_| AuthError::InvalidSignature)?;
     let signature = Signature::from_slice(&sig_bytes).map_err(|_| AuthError::InvalidSignature)?;
     let signed = message_to_sign(method, path, body, proof.nonce, proof.timestamp_ms)?;
-    verifier.verify(&signed, &signature).map_err(|_| AuthError::InvalidSignature)?;
+    verifier
+        .verify(&signed, &signature)
+        .map_err(|_| AuthError::InvalidSignature)?;
     let id = device_id(&verifier);
     nonce_window.use_once(id, proof.nonce, now_ms)?;
     Ok((id, verifier))
@@ -135,7 +139,15 @@ mod tests {
         let replay = NonceWindow::default();
         let proof = sign(&key, "POST", "/v1/sessions", br#"{}"#, 99_999);
         assert_eq!(
-            verify(&proof, "POST", "/v1/sessions", br#"{"a":1}"#, 99_999, &replay).unwrap_err(),
+            verify(
+                &proof,
+                "POST",
+                "/v1/sessions",
+                br#"{"a":1}"#,
+                99_999,
+                &replay
+            )
+            .unwrap_err(),
             AuthError::InvalidSignature
         );
         assert_eq!(

@@ -226,7 +226,8 @@ mod tests {
         let r = request();
         let mut sm = SessionMachine::default();
         sm.request(r.clone(), 100).unwrap();
-        sm.accept(r.host, BTreeSet::from([Capability::Screen]), 200).unwrap();
+        sm.accept(r.host, BTreeSet::from([Capability::Screen]), 200)
+            .unwrap();
         assert!(sm.permits(Capability::Screen, 200));
         assert!(!sm.permits(Capability::Input, 200));
         assert!(!sm.permits(Capability::Screen, 2_001));
@@ -243,7 +244,11 @@ mod tests {
             Err(ProtocolError::NotHost)
         );
         assert_eq!(
-            sm.accept(r.host, BTreeSet::from([Capability::Screen, Capability::Terminal]), 100),
+            sm.accept(
+                r.host,
+                BTreeSet::from([Capability::Screen, Capability::Terminal]),
+                100
+            ),
             Err(ProtocolError::ScopeEscalation)
         );
         assert!(!sm.permits(Capability::Screen, 100));
@@ -276,17 +281,26 @@ mod tests {
     fn expired_and_invalid_requests_are_denied() {
         let mut r = request();
         r.expires_at_ms = 100;
-        assert_eq!(SessionMachine::default().request(r.clone(), 100), Err(ProtocolError::Expired));
+        assert_eq!(
+            SessionMachine::default().request(r.clone(), 100),
+            Err(ProtocolError::Expired)
+        );
         r.expires_at_ms = 2_000;
         r.protocol_version = 99;
-        assert_eq!(SessionMachine::default().request(r, 100), Err(ProtocolError::UnsupportedVersion));
+        assert_eq!(
+            SessionMachine::default().request(r, 100),
+            Err(ProtocolError::UnsupportedVersion)
+        );
     }
 
     #[test]
     fn host_cannot_be_same_device_as_operator() {
         let mut r = request();
         r.host = r.operator;
-        assert_eq!(SessionMachine::default().request(r, 0), Err(ProtocolError::SelfConnection));
+        assert_eq!(
+            SessionMachine::default().request(r, 0),
+            Err(ProtocolError::SelfConnection)
+        );
     }
 
     #[test]

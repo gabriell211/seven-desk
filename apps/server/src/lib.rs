@@ -5,7 +5,7 @@
 //! authorization, quotas and incident operations have been validated.
 
 use axum::{
-    Router, Json,
+    Json, Router,
     body::Bytes,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -13,9 +13,15 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
-use seven_protocol::{Capability, DeviceId, SessionId, SessionMachine, SessionRequest, SessionState};
+use seven_protocol::{
+    Capability, DeviceId, SessionId, SessionMachine, SessionRequest, SessionState,
+};
 use seven_security::{NonceWindow, RequestProof, verify};
-use std::{collections::{BTreeSet, HashMap}, sync::{Arc, Mutex, RwLock}, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::{Arc, Mutex, RwLock},
+    time::{SystemTime, UNIX_EPOCH},
+};
 use uuid::Uuid;
 
 const MAX_INVITATION_MS: u64 = 5 * 60 * 1_000;
@@ -53,7 +59,10 @@ impl IntoResponse for ApiError {
 }
 
 fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 fn authenticated(
@@ -67,14 +76,22 @@ fn authenticated(
         return Err(ApiError::Invalid);
     }
     let get = |name| -> Result<String, ApiError> {
-        Ok(headers.get(name).ok_or(ApiError::Unauthorized)?
-            .to_str().map_err(|_| ApiError::Unauthorized)?.to_owned())
+        Ok(headers
+            .get(name)
+            .ok_or(ApiError::Unauthorized)?
+            .to_str()
+            .map_err(|_| ApiError::Unauthorized)?
+            .to_owned())
     };
     let proof = RequestProof {
         public_key_hex: get("x-seven-key")?,
         signature_hex: get("x-seven-signature")?,
-        nonce: get("x-seven-nonce")?.parse().map_err(|_| ApiError::Unauthorized)?,
-        timestamp_ms: get("x-seven-timestamp")?.parse().map_err(|_| ApiError::Unauthorized)?,
+        nonce: get("x-seven-nonce")?
+            .parse()
+            .map_err(|_| ApiError::Unauthorized)?,
+        timestamp_ms: get("x-seven-timestamp")?
+            .parse()
+            .map_err(|_| ApiError::Unauthorized)?,
     };
     let (device, _) = verify(&proof, method, path, body, now_ms(), &state.nonce_window)
         .map_err(|_| ApiError::Unauthorized)?;
@@ -83,7 +100,11 @@ fn authenticated(
 
 fn known(state: &AppState, device: DeviceId) -> Result<(), ApiError> {
     let devices = state.devices.read().map_err(|_| ApiError::Unavailable)?;
-    if devices.contains(&device.0) { Ok(()) } else { Err(ApiError::Unauthorized) }
+    if devices.contains(&device.0) {
+        Ok(())
+    } else {
+        Err(ApiError::Unauthorized)
+    }
 }
 
 #[derive(Serialize)]
@@ -118,8 +139,15 @@ async fn register(
         return Err(ApiError::Invalid);
     }
     let device = authenticated(&state, &headers, "POST", "/v1/devices", &body)?;
-    state.devices.write().map_err(|_| ApiError::Unavailable)?.insert(device.0);
-    Ok(Json(Registered { device_id: device, status: "registered" }))
+    state
+        .devices
+        .write()
+        .map_err(|_| ApiError::Unavailable)?
+        .insert(device.0);
+    Ok(Json(Registered {
+        device_id: device,
+        status: "registered",
+    }))
 }
 
 async fn create_session(
@@ -130,18 +158,28 @@ async fn create_session(
     let operator = authenticated(&state, &headers, "POST", "/v1/sessions", &body)?;
     known(&state, operator)?;
     let request: SessionRequest = serde_json::from_slice(&body).map_err(|_| ApiError::Invalid)?;
-    if request.operator != operator || request.expires_at_ms > now_ms().saturating_add(MAX_INVITATION_MS) {
+    if request.operator != operator
+        || request.expires_at_ms > now_ms().saturating_add(MAX_INVITATION_MS)
+    {
         return Err(ApiError::Forbidden);
     }
     known(&state, request.host)?;
     let mut machine = SessionMachine::default();
-    machine.request(request.clone(), now_ms()).map_err(|_| ApiError::Invalid)?;
+    machine
+        .request(request.clone(), now_ms())
+        .map_err(|_| ApiError::Invalid)?;
     let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
     if sessions.contains_key(&request.session_id) {
         return Err(ApiError::Conflict);
     }
     sessions.insert(request.session_id, machine);
-    Ok((StatusCode::CREATED, Json(SessionResponse { session_id: request.session_id, status: "awaiting_consent" })))
+    Ok((
+        StatusCode::CREATED,
+        Json(SessionResponse {
+            session_id: request.session_id,
+            status: "awaiting_consent",
+        }),
+    ))
 }
 
 #[derive(Serialize)]
@@ -179,7 +217,11 @@ async fn decide(
     result.map_err(|_| ApiError::Forbidden)?;
     Ok(Json(SessionResponse {
         session_id,
-        status: if decision.approve { "active" } else { "rejected" },
+        status: if decision.approve {
+            "active"
+        } else {
+            "rejected"
+        },
     }))
 }
 
@@ -195,7 +237,10 @@ async fn terminate(
     let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
     let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
     machine.terminate(actor).map_err(|_| ApiError::Forbidden)?;
-    Ok(Json(SessionResponse { session_id, status: "ended" }))
+    Ok(Json(SessionResponse {
+        session_id,
+        status: "ended",
+    }))
 }
 
 #[derive(Serialize)]
@@ -223,7 +268,9 @@ async fn get_session(
         }
         _ => false,
     };
-    if !member { return Err(ApiError::Forbidden); }
+    if !member {
+        return Err(ApiError::Forbidden);
+    }
     machine.expire(now_ms());
     let value = match machine.state() {
         SessionState::AwaitingConsent(_) => PublicState::AwaitingConsent,
@@ -247,36 +294,63 @@ pub fn router(state: Arc<AppState>) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{body::{Body, to_bytes}, http::Request};
+    use axum::{
+        body::{Body, to_bytes},
+        http::Request,
+    };
     use tower::ServiceExt;
 
     #[tokio::test]
     async fn health_marks_server_as_not_production_ready() {
         let response = router(Arc::new(AppState::default()))
-            .oneshot(Request::builder().uri("/healthz").body(Body::empty()).unwrap())
-            .await.unwrap();
+            .oneshot(
+                Request::builder()
+                    .uri("/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE).await.unwrap();
-        assert!(std::str::from_utf8(&body).unwrap().contains("\"production_ready\":false"));
+        let body = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE)
+            .await
+            .unwrap();
+        assert!(
+            std::str::from_utf8(&body)
+                .unwrap()
+                .contains("\"production_ready\":false")
+        );
     }
 
     #[tokio::test]
     async fn registration_requires_signed_proof() {
         let response = router(Arc::new(AppState::default()))
-            .oneshot(Request::builder().method("POST").uri("/v1/devices")
-                .header("content-type", "application/json")
-                .body(Body::from("{}")).unwrap())
-            .await.unwrap();
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/devices")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
     async fn sessions_do_not_allow_unsigned_requests() {
         let response = router(Arc::new(AppState::default()))
-            .oneshot(Request::builder().method("POST").uri("/v1/sessions")
-                .header("content-type", "application/json")
-                .body(Body::from("{}")).unwrap())
-            .await.unwrap();
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/sessions")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }
