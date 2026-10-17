@@ -130,7 +130,11 @@ async function main() {
     });
     await verify("signed-payload-tampering-and-replay", async () => {
       const route = "/v1/devices/heartbeat", proof = signed(host, "POST", route, {});
-      const tampered = await fetch(base + route, { ...proof, body: Buffer.from('{"tampered":true}') });
+      // Session creation authenticates before parsing JSON; this proves that
+      // a modified body invalidates the Ed25519 signature (not just JSON shape).
+      const protectedRoute = "/v1/sessions";
+      const protectedProof = signed(actor, "POST", protectedRoute, invite);
+      const tampered = await fetch(base + protectedRoute, { ...protectedProof, body: Buffer.from('{"tampered":true}') });
       assert.equal(tampered.status, 401);
       assert.equal((await fetch(base + route, proof)).status, 200);
       assert.equal((await fetch(base + route, proof)).status, 401);
