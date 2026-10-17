@@ -89,6 +89,8 @@ A tabela a seguir é o **escopo-alvo**, não uma lista de funcionalidades pronta
 
 **Nenhuma plataforma está homologada no estado inicial.** Cada combinação cliente/host terá matriz de compatibilidade, testes e limitações documentadas.
 
+> **Suporte de sistema operacional:** o suporte regular do Windows 10 terminou em 14/10/2025. Sua compatibilidade pode ser testada, mas o Seven Desk só poderá declarar suporte produtivo a versões/edições com cobertura de atualizações de segurança adequada (como ESU válida, onde aplicável). Windows 11 é a referência principal para o MVP. Veja [a matriz de homologação](docs/HOMOLOGACAO.md) e [o inventário de compatibilidade](docs/MATRIZ_FUNCIONAL.md).
+
 ## Instalação oficial — Instalador Seven Desk
 
 A distribuição oficial do aplicativo desktop deverá ser feita pelo **Instalador Seven Desk**, identificado com o nome, ícone, editora e versão do próprio produto. **O instalador, e não uma pasta de executáveis soltos ou scripts manuais, será o caminho padrão de instalação para usuários finais.**
