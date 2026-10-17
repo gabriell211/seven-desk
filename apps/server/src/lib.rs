@@ -289,6 +289,46 @@ async fn pending_invitations(
     Ok(Json(pending))
 }
 
+#[derive(Serialize)]
+struct ActiveAuthorization {
+    session_id: SessionId,
+    operator: DeviceId,
+    granted: BTreeSet<Capability>,
+    expires_at_ms: u64,
+}
+
+/// The host always retains the ability to inspect and end its authorizations,
+/// including after its UI restarts. No other device can enumerate them.
+async fn active_authorizations(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ActiveAuthorization>>, ApiError> {
+    let host = authenticated(&state, &headers, "GET", "/v1/sessions/host/active", &[])?;
+    known(&state, host)?;
+    let now = now_ms();
+    let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
+    let mut active = Vec::new();
+    for machine in sessions.values_mut() {
+        machine.expire(now);
+        if let SessionState::Active {
+            request,
+            granted,
+            session_deadline_ms,
+        } = machine.state()
+            && request.host == host
+        {
+            active.push(ActiveAuthorization {
+                session_id: request.session_id,
+                operator: request.operator,
+                granted: granted.clone(),
+                expires_at_ms: *session_deadline_ms,
+            });
+        }
+    }
+    active.sort_by_key(|entry| entry.expires_at_ms);
+    Ok(Json(active))
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Decision {
@@ -431,6 +471,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/devices/{id}/presence", get(presence))
         .route("/v1/sessions", post(create_session))
         .route("/v1/sessions/inbox", get(pending_invitations))
+        .route("/v1/sessions/host/active", get(active_authorizations))
         .route("/v1/sessions/{id}", get(get_session).delete(terminate))
         .route("/v1/sessions/{id}/decision", post(decide))
         .route("/v1/sessions/{id}/revoke", post(revoke))
@@ -918,6 +959,115 @@ mod tests {
             .unwrap();
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["online"], false);
+    }
+
+    #[tokio::test]
+    async fn active_authorizations_are_visible_only_to_host_and_remain_revocable() {
+        let service = router(Arc::new(AppState::default()));
+        let operator = SigningKey::from_bytes(&[51_u8; 32]);
+        let host = SigningKey::from_bytes(&[52_u8; 32]);
+        let outsider = SigningKey::from_bytes(&[53_u8; 32]);
+        let listing_path = "/v1/sessions/host/active";
+
+        for key in [&operator, &host, &outsider] {
+            let registered = service
+                .clone()
+                .oneshot(signed_request(key, "POST", "/v1/devices", b"{}".to_vec()))
+                .await
+                .unwrap();
+            assert_eq!(registered.status(), StatusCode::OK);
+        }
+
+        let session_id = SessionId(Uuid::new_v4());
+        let invitation = SessionRequest {
+            protocol_version: seven_protocol::PROTOCOL_VERSION,
+            session_id,
+            operator: device_id(&operator.verifying_key()),
+            host: device_id(&host.verifying_key()),
+            requested: BTreeSet::from([Capability::Screen, Capability::Input]),
+            expires_at_ms: now_ms() + 30_000,
+        };
+        let requested = service
+            .clone()
+            .oneshot(signed_request(
+                &operator,
+                "POST",
+                "/v1/sessions",
+                serde_json::to_vec(&invitation).unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(requested.status(), StatusCode::CREATED);
+
+        let decision = format!("/v1/sessions/{}/decision", session_id.0);
+        let approved = service
+            .clone()
+            .oneshot(signed_request(
+                &host,
+                "POST",
+                &decision,
+                br#"{"approve":true,"granted":["screen"]}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(approved.status(), StatusCode::OK);
+
+        let unsigned = service
+            .clone()
+            .oneshot(Request::builder().uri(listing_path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(unsigned.status(), StatusCode::UNAUTHORIZED);
+
+        for key in [&operator, &outsider] {
+            let response = service
+                .clone()
+                .oneshot(signed_request(key, "GET", listing_path, vec![]))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let raw = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE)
+                .await
+                .unwrap();
+            assert_eq!(raw.as_ref(), b"[]");
+        }
+
+        let response = service
+            .clone()
+            .oneshot(signed_request(&host, "GET", listing_path, vec![]))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let raw = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE)
+            .await
+            .unwrap();
+        let sessions: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(sessions.as_array().unwrap().len(), 1);
+        assert_eq!(sessions[0]["session_id"], session_id.0.to_string());
+        assert_eq!(sessions[0]["operator"], invitation.operator.0.to_string());
+        assert_eq!(sessions[0]["granted"], serde_json::json!(["screen"]));
+
+        let terminated = service
+            .clone()
+            .oneshot(signed_request(
+                &host,
+                "DELETE",
+                &format!("/v1/sessions/{}", session_id.0),
+                vec![],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(terminated.status(), StatusCode::OK);
+
+        let response = service
+            .clone()
+            .oneshot(signed_request(&host, "GET", listing_path, vec![]))
+            .await
+            .unwrap();
+        let raw = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE)
+            .await
+            .unwrap();
+        assert_eq!(raw.as_ref(), b"[]");
     }
 
     #[tokio::test]
