@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { getBackendStatus, getLocalStatus, initializeIdentity, type LocalStatus } from "./bridge";
+import {
+  getBackendStatus,
+  getLocalStatus,
+  heartbeatLocalDevice,
+  initializeIdentity,
+  registerLocalDevice,
+  type LocalStatus,
+} from "./bridge";
 
 type Page = "inicio" | "dispositivos" | "configuracoes";
 type Theme = "dark" | "light";
@@ -21,6 +28,8 @@ export function App() {
   const [feedback, setFeedback] = useState("");
   const [busy, setBusy] = useState(true);
   const [enrolling, setEnrolling] = useState(false);
+  const [registering, setRegistering] = useState(false);
+  const [presenceActive, setPresenceActive] = useState(false);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -62,6 +71,37 @@ export function App() {
       setFeedback(error instanceof Error ? error.message : "Não foi possível ativar este dispositivo.");
     } finally {
       setEnrolling(false);
+    }
+  }
+
+  // Presence is opt-in for this running UI session. An interrupted heartbeat
+  // expires server-side after the configured TTL; it never enables remote input.
+  useEffect(() => {
+    if (!presenceActive) return;
+    const timer = window.setInterval(() => {
+      void heartbeatLocalDevice().catch(() => {
+        setPresenceActive(false);
+        setFeedback("Presença local interrompida. Registre este dispositivo novamente.");
+      });
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [presenceActive]);
+
+  async function registerWithLocalServer(): Promise<void> {
+    if (!status?.device_id || !backendReady || registering) return;
+    setRegistering(true);
+    try {
+      const registeredId = await registerLocalDevice();
+      if (registeredId !== status.device_id) {
+        throw new Error("A identidade registrada não corresponde a este dispositivo.");
+      }
+      setPresenceActive(true);
+      setFeedback("Dispositivo registrado no servidor local de desenvolvimento.");
+    } catch (error: unknown) {
+      setPresenceActive(false);
+      setFeedback(error instanceof Error ? error.message : "Falha ao registrar dispositivo.");
+    } finally {
+      setRegistering(false);
     }
   }
 
@@ -141,6 +181,23 @@ export function App() {
                     ? "Identidade local protegida. Serviço remoto ainda não configurado."
                     : "Ative uma identidade local antes de conectar ou compartilhar seu ID."}
                 </div>
+                {hasIdentity && (
+                  <div>
+                    <button
+                      className="secondary"
+                      type="button"
+                      disabled={!backendReady || registering || presenceActive}
+                      onClick={() => void registerWithLocalServer()}
+                    >
+                      {registering ? "Registrando..." : presenceActive ? "Presença local ativa" : "Registrar no servidor local"}
+                    </button>
+                    <p className="foot-note" role="status">
+                      {presenceActive
+                        ? "Presença temporária ativa. Não habilita captura nem acesso remoto."
+                        : "Registro experimental e voluntário, disponível apenas com o servidor local iniciado."}
+                    </p>
+                  </div>
+                )}
               </section>
               <section className="panel connection-panel" aria-labelledby="connect-heading">
                 <div className="section-title"><div className="card-icon blue">↗</div>
