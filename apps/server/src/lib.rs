@@ -434,6 +434,11 @@ async fn configure_screen_delivery(
             .lock()
             .map_err(|_| ApiError::Unavailable)?
             .remove(&session_id);
+        state
+            .keyboard_queues
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
+            .remove(&session_id);
     }
     Ok(Json(ScreenDeliveryResponse {
         enabled: input.enabled,
@@ -805,6 +810,11 @@ async fn terminate(
         .lock()
         .map_err(|_| ApiError::Unavailable)?
         .remove(&session_id);
+    state
+        .keyboard_queues
+        .lock()
+        .map_err(|_| ApiError::Unavailable)?
+        .remove(&session_id);
     Ok(Json(SessionResponse {
         session_id,
         status: "ended",
@@ -837,6 +847,13 @@ async fn revoke(
     if ended || input.capability == Capability::Input || input.capability == Capability::Screen {
         state
             .input_queues
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
+            .remove(&session_id);
+    }
+    if ended || input.capability == Capability::Keyboard || input.capability == Capability::Screen {
+        state
+            .keyboard_queues
             .lock()
             .map_err(|_| ApiError::Unavailable)?
             .remove(&session_id);
@@ -887,6 +904,11 @@ async fn get_session(
             .remove(&SessionId(id));
         state
             .input_queues
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
+            .remove(&SessionId(id));
+        state
+            .keyboard_queues
             .lock()
             .map_err(|_| ApiError::Unavailable)?
             .remove(&SessionId(id));
