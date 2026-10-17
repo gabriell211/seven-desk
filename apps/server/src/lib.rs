@@ -52,8 +52,7 @@ pub struct AppState {
     // Never persist user input or allow unattended input injection.
     input_queues: Mutex<HashMap<SessionId, InputQueue>>,
     keyboard_queues: Mutex<HashMap<SessionId, KeyboardQueue>>,
-    nonce_window: NonceWindow,
-}
+    nonce_window: NonceWindow,}
 
 #[derive(Debug)]
 pub enum ApiError {
@@ -122,10 +121,12 @@ fn authenticated(
             .parse()
             .map_err(|_| ApiError::Unauthorized)?,
     };
-    let (device, _) = verify(&proof, method, path, body, now_ms(), &state.nonce_window)
-        .map_err(|error| match error {
-            AuthError::CapacityExceeded => ApiError::RateLimited,
-            _ => ApiError::Unauthorized,
+    let (device, _) =
+        verify(&proof, method, path, body, now_ms(), &state.nonce_window).map_err(|error| {
+            match error {
+                AuthError::CapacityExceeded => ApiError::RateLimited,
+                _ => ApiError::Unauthorized,
+            }
         })?;
     Ok(device)
 }
@@ -293,11 +294,20 @@ async fn create_session(
             !matches!(entry.state(), SessionState::Ended | SessionState::Rejected)
         });
         let live: HashSet<SessionId> = sessions.keys().copied().collect();
-        state.frames.lock().map_err(|_| ApiError::Unavailable)?
+        state
+            .frames
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
             .retain(|id, _| live.contains(id));
-        state.input_queues.lock().map_err(|_| ApiError::Unavailable)?
+        state
+            .input_queues
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
             .retain(|id, _| live.contains(id));
-        state.keyboard_queues.lock().map_err(|_| ApiError::Unavailable)?
+        state
+            .keyboard_queues
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
             .retain(|id, _| live.contains(id));
     }
     if sessions.len() >= MAX_STORED_SESSIONS {
@@ -2472,9 +2482,11 @@ mod tests {
         let host = SigningKey::from_bytes(&[46_u8; 32]);
         let other = SigningKey::from_bytes(&[47_u8; 32]);
         for key in [&operator, &host, &other] {
-            let response = service.clone().oneshot(signed_request(
-                key, "POST", "/v1/devices", b"{}".to_vec(),
-            )).await.unwrap();
+            let response = service
+                .clone()
+                .oneshot(signed_request(key, "POST", "/v1/devices", b"{}".to_vec()))
+                .await
+                .unwrap();
             assert_eq!(response.status(), StatusCode::OK);
         }
         let host_id = device_id(&host.verifying_key());
@@ -2490,30 +2502,64 @@ mod tests {
         let mut first = None;
         for _ in 0..MAX_PENDING_PER_OPERATOR {
             let request = make(operator_id);
-            if first.is_none() { first = Some(request.session_id); }
-            let response = service.clone().oneshot(signed_request(
-                &operator, "POST", "/v1/sessions", serde_json::to_vec(&request).unwrap(),
-            )).await.unwrap();
+            if first.is_none() {
+                first = Some(request.session_id);
+            }
+            let response = service
+                .clone()
+                .oneshot(signed_request(
+                    &operator,
+                    "POST",
+                    "/v1/sessions",
+                    serde_json::to_vec(&request).unwrap(),
+                ))
+                .await
+                .unwrap();
             assert_eq!(response.status(), StatusCode::CREATED);
         }
         let blocked = make(operator_id);
-        let response = service.clone().oneshot(signed_request(
-            &operator, "POST", "/v1/sessions", serde_json::to_vec(&blocked).unwrap(),
-        )).await.unwrap();
+        let response = service
+            .clone()
+            .oneshot(signed_request(
+                &operator,
+                "POST",
+                "/v1/sessions",
+                serde_json::to_vec(&blocked).unwrap(),
+            ))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
         let independent = make(device_id(&other.verifying_key()));
-        let response = service.clone().oneshot(signed_request(
-            &other, "POST", "/v1/sessions", serde_json::to_vec(&independent).unwrap(),
-        )).await.unwrap();
+        let response = service
+            .clone()
+            .oneshot(signed_request(
+                &other,
+                "POST",
+                "/v1/sessions",
+                serde_json::to_vec(&independent).unwrap(),
+            ))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::CREATED);
         {
             let mut sessions = state.sessions.lock().unwrap();
-            assert!(sessions.get_mut(&first.unwrap()).unwrap().expire(now_ms() + 121_000));
+            assert!(
+                sessions
+                    .get_mut(&first.unwrap())
+                    .unwrap()
+                    .expire(now_ms() + 121_000)
+            );
         }
         let retry = make(operator_id);
-        let response = service.oneshot(signed_request(
-            &operator, "POST", "/v1/sessions", serde_json::to_vec(&retry).unwrap(),
-        )).await.unwrap();
+        let response = service
+            .oneshot(signed_request(
+                &operator,
+                "POST",
+                "/v1/sessions",
+                serde_json::to_vec(&retry).unwrap(),
+            ))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::CREATED);
     }
 
@@ -2529,14 +2575,22 @@ mod tests {
                 devices.insert(DeviceId(Uuid::new_v4()), now_ms() + PRESENCE_TTL_MS);
             }
         }
-        let renewed = service.clone().oneshot(signed_request(
-            &own, "POST", "/v1/devices", b"{}".to_vec(),
-        )).await.unwrap();
+        let renewed = service
+            .clone()
+            .oneshot(signed_request(&own, "POST", "/v1/devices", b"{}".to_vec()))
+            .await
+            .unwrap();
         assert_eq!(renewed.status(), StatusCode::OK);
         let new_key = SigningKey::from_bytes(&[49_u8; 32]);
-        let blocked = service.oneshot(signed_request(
-            &new_key, "POST", "/v1/devices", b"{}".to_vec(),
-        )).await.unwrap();
+        let blocked = service
+            .oneshot(signed_request(
+                &new_key,
+                "POST",
+                "/v1/devices",
+                b"{}".to_vec(),
+            ))
+            .await
+            .unwrap();
         assert_eq!(blocked.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 
@@ -2547,9 +2601,11 @@ mod tests {
         let actor = SigningKey::from_bytes(&[51_u8; 32]);
         let host = SigningKey::from_bytes(&[52_u8; 32]);
         for key in [&actor, &host] {
-            let response = service.clone().oneshot(signed_request(
-                key, "POST", "/v1/devices", b"{}".to_vec(),
-            )).await.unwrap();
+            let response = service
+                .clone()
+                .oneshot(signed_request(key, "POST", "/v1/devices", b"{}".to_vec()))
+                .await
+                .unwrap();
             assert_eq!(response.status(), StatusCode::OK);
         }
         let operator_id = device_id(&actor.verifying_key());
@@ -2567,7 +2623,9 @@ mod tests {
             let mut sessions = state.sessions.lock().unwrap();
             let mut accepted = SessionMachine::default();
             accepted.request(active.clone(), now_ms()).unwrap();
-            accepted.accept(host_id, active.requested.clone(), now_ms()).unwrap();
+            accepted
+                .accept(host_id, active.requested.clone(), now_ms())
+                .unwrap();
             sessions.insert(active.session_id, accepted);
             for _ in 1..MAX_STORED_SESSIONS {
                 let ended = make();
@@ -2578,12 +2636,23 @@ mod tests {
             }
         }
         let next = make();
-        let response = service.oneshot(signed_request(
-            &actor, "POST", "/v1/sessions", serde_json::to_vec(&next).unwrap(),
-        )).await.unwrap();
+        let response = service
+            .oneshot(signed_request(
+                &actor,
+                "POST",
+                "/v1/sessions",
+                serde_json::to_vec(&next).unwrap(),
+            ))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::CREATED);
         let sessions = state.sessions.lock().unwrap();
-        assert!(sessions.get(&active.session_id).unwrap().permits(Capability::Screen, now_ms()));
+        assert!(
+            sessions
+                .get(&active.session_id)
+                .unwrap()
+                .permits(Capability::Screen, now_ms())
+        );
         assert!(sessions.contains_key(&next.session_id));
         assert_eq!(sessions.len(), 2);
     }
