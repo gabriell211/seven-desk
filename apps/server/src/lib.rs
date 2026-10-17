@@ -204,7 +204,10 @@ async fn presence(
         .map_err(|_| ApiError::Unavailable)?
         .get(&device)
         .is_some_and(|expires_at| *expires_at > now_ms());
-    Ok(Json(PresenceStatus { device_id: device, online }))
+    Ok(Json(PresenceStatus {
+        device_id: device,
+        online,
+    }))
 }
 
 async fn create_session(
@@ -870,12 +873,7 @@ mod tests {
 
         let registered_again = service
             .clone()
-            .oneshot(signed_request(
-                &host,
-                "POST",
-                "/v1/devices",
-                b"{}".to_vec(),
-            ))
+            .oneshot(signed_request(&host, "POST", "/v1/devices", b"{}".to_vec()))
             .await
             .unwrap();
         assert_eq!(registered_again.status(), StatusCode::OK);
