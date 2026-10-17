@@ -1,0 +1,14 @@
+{
+  "name": "seven-desk",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/desktop"],
+  "scripts": {
+    "desktop:dev": "npm run dev --workspace @seven/desktop",
+    "desktop:build": "npm run build --workspace @seven/desktop",
+    "desktop:check": "npm run check --workspace @seven/desktop",
+    "tauri:dev": "npm run tauri:dev --workspace @seven/desktop",
+    "tauri:build": "npm run tauri:build --workspace @seven/desktop"
+  },
+  "engines": { "node": ">=22.12.0" }
+}
