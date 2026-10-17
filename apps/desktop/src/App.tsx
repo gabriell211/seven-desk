@@ -7,12 +7,14 @@ import {
   registerLocalDevice,
   requestSupport,
   pendingInvitations,
+  activeAuthorizations,
   decideInvitation,
   readSessionState,
   terminateSession,
   type LocalStatus,
   type SessionReceipt,
   type PendingInvitation,
+  type ActiveAuthorization,
 } from "./bridge";
 
 type Page = "inicio" | "dispositivos" | "configuracoes";
@@ -39,7 +41,7 @@ export function App() {
   const [presenceActive, setPresenceActive] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [outboundSession, setOutboundSession] = useState<SessionReceipt | null>(null);
-  const [hostSession, setHostSession] = useState<SessionReceipt | null>(null);
+  const [activeSessions, setActiveSessions] = useState<ActiveAuthorization[]>([]);
   const [inbox, setInbox] = useState<PendingInvitation[]>([]);
   const [decisionBusy, setDecisionBusy] = useState<string | null>(null);
   const [ending, setEnding] = useState(false);
@@ -123,6 +125,7 @@ export function App() {
   useEffect(() => {
     if (!presenceActive || !backendReady) {
       setInbox([]);
+      setActiveSessions([]);
       return;
     }
     let stopped = false;
@@ -131,10 +134,19 @@ export function App() {
       if (fetching) return;
       fetching = true;
       try {
-        const received = await pendingInvitations();
-        if (!stopped) setInbox(received);
+        const [received, authorizations] = await Promise.all([
+          pendingInvitations(),
+          activeAuthorizations(),
+        ]);
+        if (!stopped) {
+          setInbox(received);
+          setActiveSessions(authorizations);
+        }
       } catch {
-        if (!stopped) setInbox([]);
+        if (!stopped) {
+          setInbox([]);
+          setActiveSessions([]);
+        }
       } finally {
         fetching = false;
       }
@@ -182,9 +194,9 @@ export function App() {
     if (decisionBusy) return;
     setDecisionBusy(sessionId);
     try {
-      const result = await decideInvitation(sessionId, approve);
+      await decideInvitation(sessionId, approve);
       setInbox((previous) => previous.filter((item) => item.session_id !== sessionId));
-      if (approve) setHostSession(result);
+      // The signed authorization listing refreshes automatically after approval.
       setFeedback(approve
         ? "Negociação autorizada. Compartilhamento de tela ainda não está implementado."
         : "Solicitação recusada com sucesso.");
@@ -201,7 +213,7 @@ export function App() {
     try {
       const result = await terminateSession(sessionId);
       if (outboundSession?.session_id === sessionId) setOutboundSession(result);
-      if (hostSession?.session_id === sessionId) setHostSession(null);
+      setActiveSessions((current) => current.filter((item) => item.session_id !== sessionId));
       setFeedback("Negociação encerrada e permissões revogadas.");
     } catch (error: unknown) {
       setFeedback(error instanceof Error ? error.message : "Não foi possível encerrar a sessão.");
@@ -354,12 +366,22 @@ export function App() {
                     </div>
                   ))
                 }
-                {hostSession && hostSession.status === "active" && (
-                  <div className="foot-note" role="status">
-                    Negociação autorizada, sem captura. <button className="secondary" type="button"
-                      disabled={ending} onClick={() => void closeSession(hostSession.session_id)}>Encerrar autorização</button>
-                  </div>
-                )}
+                <div className="section-title"><div className="card-icon muted">●</div>
+                  <div><h2>Autorizações ativas</h2>
+                    <p>Visíveis mesmo depois de reabrir a interface, enquanto o servidor mantiver as sessões.</p></div>
+                </div>
+                {activeSessions.length === 0 ? <p className="foot-note">Nenhuma autorização ativa.</p> :
+                  activeSessions.map((item) => (
+                    <div className="setting-row" key={item.session_id}>
+                      <div>
+                        <strong>Operador: {item.operator}</strong>
+                        <p>Capacidades: {item.granted.join(", ")}. Autorização de negociação, sem captura.</p>
+                      </div>
+                      <button className="secondary" type="button" disabled={ending}
+                        onClick={() => void closeSession(item.session_id)}>Encerrar autorização</button>
+                    </div>
+                  ))
+                }
               </section>
             )}
             <section className="panel recent-panel">
