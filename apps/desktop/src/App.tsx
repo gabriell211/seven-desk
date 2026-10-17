@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   getBackendStatus,
   getLocalStatus,
@@ -15,6 +15,10 @@ import {
   publishManualFrame,
   getAuthorizedFrame,
   setScreenDelivery,
+  sendRemoteMouse,
+  configureHostMouse,
+  pollHostMouse,
+  type RemoteMouseEvent,
   type LocalStatus,
   type SessionReceipt,
   type PendingInvitation,
@@ -39,6 +43,12 @@ export function App() {
   const [status, setStatus] = useState<LocalStatus | null>(null);
   const [backendReady, setBackendReady] = useState(false);
   const [target, setTarget] = useState("");
+  const [requestMouse, setRequestMouse] = useState(false);
+  const [viewerMouseActive, setViewerMouseActive] = useState(false);
+  const [hostMouseSession, setHostMouseSession] = useState<string | null>(null);
+  const [mouseBusy, setMouseBusy] = useState(false);
+  const lastMouseMovement = useRef(0);
+  const inputSendBusy = useRef(false);
   const [feedback, setFeedback] = useState("");
   const [busy, setBusy] = useState(true);
   const [enrolling, setEnrolling] = useState(false);
@@ -276,11 +286,63 @@ export function App() {
     }
   }, [activeSessions, streamingSession]);
 
+  // Mouse events are only applied while the host explicitly enabled them,
+  // screen sharing remains active, and this frontend is not hidden.
+  useEffect(() => {
+    if (!hostMouseSession) return;
+    const id = hostMouseSession;
+    if (!presenceActive || !backendReady || streamingSession !== id) {
+      setHostMouseSession(null);
+      void configureHostMouse(id, false);
+      return;
+    }
+    let stopped = false;
+    let busy = false;
+    async function pump(): Promise<void> {
+      if (stopped || busy) return;
+      busy = true;
+      try {
+        await pollHostMouse(id);
+      } catch (error: unknown) {
+        if (!stopped) {
+          setHostMouseSession(null);
+          void configureHostMouse(id, false);
+          setFeedback(error instanceof Error ? error.message : "Mouse remoto interrompido.");
+        }
+      } finally {
+        busy = false;
+      }
+    }
+    const timer = window.setInterval(() => void pump(), 180);
+    const stopWhenHidden = () => {
+      if (document.hidden) {
+        setHostMouseSession(null);
+        void configureHostMouse(id, false);
+      }
+    };
+    document.addEventListener("visibilitychange", stopWhenHidden);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", stopWhenHidden);
+      void configureHostMouse(id, false);
+    };
+  }, [hostMouseSession, streamingSession, presenceActive, backendReady]);
+
+  useEffect(() => {
+    if (!outboundSession || outboundSession.status !== "active" ||
+        !operatorSessions.some((item) =>
+          item.session_id === outboundSession.session_id && item.granted.includes("input")
+        )) {
+      setViewerMouseActive(false);
+    }
+  }, [outboundSession?.session_id, outboundSession?.status, operatorSessions]);
+
   async function sendInvitation(): Promise<void> {
     if (!presenceActive || requesting) return;
     setRequesting(true);
     try {
-      const result = await requestSupport(target.trim());
+      const result = await requestSupport(target.trim(), requestMouse);
       setOutboundSession(result);
       setFeedback("Solicitação de negociação enviada. Aguarde a autorização no host.");
     } catch (error: unknown) {
@@ -290,11 +352,11 @@ export function App() {
     }
   }
 
-  async function respondToInvitation(sessionId: string, approve: boolean): Promise<void> {
+  async function respondToInvitation(sessionId: string, approve: boolean, grantMouse = false): Promise<void> {
     if (decisionBusy) return;
     setDecisionBusy(sessionId);
     try {
-      await decideInvitation(sessionId, approve);
+      await decideInvitation(sessionId, approve, grantMouse);
       setInbox((previous) => previous.filter((item) => item.session_id !== sessionId));
       // The signed authorization listing refreshes automatically after approval.
       setFeedback(approve
@@ -318,6 +380,10 @@ export function App() {
         setLastFrame(null);
       }
       if (streamingSession === sessionId) setStreamingSession(null);
+      if (hostMouseSession === sessionId) {
+        setHostMouseSession(null);
+        void configureHostMouse(sessionId, false);
+      }
       setActiveSessions((current) => current.filter((item) => item.session_id !== sessionId));
       setOperatorSessions((current) => current.filter((item) => item.session_id !== sessionId));
       setFeedback("Negociação encerrada e permissões revogadas.");
@@ -355,6 +421,79 @@ export function App() {
       setFeedback(error instanceof Error ? error.message : "Não foi possível ativar o compartilhamento.");
     } finally {
       setSharingBusy(false);
+    }
+  }
+
+  async function toggleHostMouse(sessionId: string): Promise<void> {
+    if (mouseBusy) return;
+    setMouseBusy(true);
+    try {
+      if (hostMouseSession === sessionId) {
+        setHostMouseSession(null);
+        await configureHostMouse(sessionId, false);
+        setFeedback("Controle de mouse desativado neste computador.");
+      } else {
+        if (streamingSession !== sessionId) {
+          throw new Error("Inicie o compartilhamento de tela antes de habilitar o mouse.");
+        }
+        await configureHostMouse(sessionId, true);
+        setHostMouseSession(sessionId);
+        setFeedback("Controle de mouse remoto ativo. Use Parar mouse para bloquear imediatamente.");
+      }
+    } catch (error: unknown) {
+      setFeedback(error instanceof Error ? error.message : "Falha ao configurar mouse remoto.");
+    } finally {
+      setMouseBusy(false);
+    }
+  }
+
+  async function submitViewerMouse(event: RemoteMouseEvent, motion: boolean): Promise<void> {
+    if (!viewerMouseActive || !outboundSession || outboundSession.status !== "active") return;
+    if (inputSendBusy.current && motion) return;
+    if (motion) inputSendBusy.current = true;
+    try {
+      await sendRemoteMouse(outboundSession.session_id, event);
+    } catch (error: unknown) {
+      // Network, revocation and rate limiting must not leave pointer control
+      // looking active after a failed command.
+      setViewerMouseActive(false);
+      setFeedback(error instanceof Error ? error.message : "Controle do mouse interrompido.");
+    } finally {
+      if (motion) inputSendBusy.current = false;
+    }
+  }
+
+  function imagePointer(event: ReactPointerEvent<HTMLImageElement>): { x: number; y: number } | null {
+    const image = event.currentTarget;
+    const rect = image.getBoundingClientRect();
+    if (!image.naturalWidth || !image.naturalHeight || rect.width <= 0 || rect.height <= 0) return null;
+    // object-fit: contain can letterbox; only the actual image content is interactive.
+    const scale = Math.min(rect.width / image.naturalWidth, rect.height / image.naturalHeight);
+    const shownWidth = image.naturalWidth * scale;
+    const shownHeight = image.naturalHeight * scale;
+    const left = rect.left + (rect.width - shownWidth) / 2;
+    const top = rect.top + (rect.height - shownHeight) / 2;
+    const relX = (event.clientX - left) / shownWidth;
+    const relY = (event.clientY - top) / shownHeight;
+    if (relX < 0 || relY < 0 || relX > 1 || relY > 1) return null;
+    return { x: Math.round(relX * 10_000), y: Math.round(relY * 10_000) };
+  }
+
+  function forwardViewerPointer(
+    event: ReactPointerEvent<HTMLImageElement>,
+    kind: "move" | "click",
+    button: "left" | "right" | "middle" = "left",
+  ): void {
+    if (!viewerMouseActive || (event.pointerType !== "mouse" && event.pointerType !== "pen")) return;
+    const mapped = imagePointer(event);
+    if (!mapped) return;
+    if (kind === "move") {
+      const time = Date.now();
+      if (time - lastMouseMovement.current < 90) return;
+      lastMouseMovement.current = time;
+      void submitViewerMouse({ type: "move", ...mapped }, true);
+    } else {
+      void submitViewerMouse({ type: "click", ...mapped, button }, false);
     }
   }
 
