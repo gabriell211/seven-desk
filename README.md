@@ -12,7 +12,7 @@
 </div>
 
 > [!IMPORTANT]
-> **Status: desenvolvimento pré-alfa.** Já existem contratos Rust, identidade assinada, sinalização de sessão, interface Tauri/React e **captura real do monitor principal no Windows com publicação manual ou atualização experimental de até ~1 quadro/segundo**, condicionada a autorização e início voluntário pelo host. Há controle explícito para pausar e encerrar a entrega de tela. **Ainda não há controle remoto de mouse/teclado, vídeo profissional, E2EE, serviço host completo ou qualquer plataforma homologada em E2E/produção.** A maioria dos recursos continua planejada. Veja [o status técnico](docs/IMPLEMENTACAO.md) e as [issues](https://github.com/gabriell211/seven-desk/issues).
+> **Status: desenvolvimento pré-alfa.** Já existem contratos Rust, identidade assinada, sinalização de sessão, interface Tauri/React e **captura real do monitor principal no Windows com publicação manual ou atualização experimental de até ~1 quadro/segundo**, condicionada a autorização e início voluntário pelo host. Há controle explícito para pausar e encerrar a entrega de tela. **Há controle experimental de mouse no monitor principal Windows**, com consentimento `input` separado, ativação voluntária no host e parada visível; **ainda não há teclado remoto, vídeo profissional, E2EE, serviço host completo nem plataforma homologada em E2E/produção**. A maioria dos recursos continua planejada. Veja [o status técnico](docs/IMPLEMENTACAO.md) e as [issues](https://github.com/gabriell211/seven-desk/issues).
 
 ## Visão geral
 
