@@ -134,6 +134,7 @@ pub fn run() {
             session_api::decide_session,
             session_api::send_session_chat,
             session_api::list_session_chat,
+            session_api::check_device_presence,
             session_api::revoke_session_chat,
             session_api::session_status,
             session_api::set_screen_delivery,
