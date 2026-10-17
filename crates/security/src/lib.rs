@@ -221,8 +221,9 @@ mod tests {
             window.use_once(actor, Uuid::new_v4(), now),
             Err(AuthError::CapacityExceeded)
         );
-        window.use_once(actor, Uuid::new_v4(), now + MAX_CLOCK_SKEW_MS * 2 + 1).unwrap();
+        window
+            .use_once(actor, Uuid::new_v4(), now + MAX_CLOCK_SKEW_MS * 2 + 1)
+            .unwrap();
         assert_eq!(window.seen.lock().unwrap().len(), 1);
     }
-
 }
