@@ -4,7 +4,10 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use seven_identity::{Identity, SystemKeyStore};
-use seven_protocol::{Capability, DeviceId, MouseEvent, PROTOCOL_VERSION, SessionId, SessionRequest};
+use seven_protocol::{
+    Capability, DeviceId, KeyboardEvent, KeyboardKey, MouseEvent, PROTOCOL_VERSION, SessionId,
+    SessionRequest,
+};
 use std::{
     collections::BTreeSet,
     sync::Mutex,
@@ -18,6 +21,7 @@ const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
 
 // The native process defaults to refusing mouse injection on every launch.
 static ENABLED_HOST_MOUSE: Mutex<Option<Uuid>> = Mutex::new(None);
+static ENABLED_HOST_KEYBOARD: Mutex<Option<Uuid>> = Mutex::new(None);
 
 #[derive(Serialize, Deserialize)]
 pub struct SessionReceipt {
@@ -56,7 +60,13 @@ fn timestamp_ms() -> Result<u64, String> {
         .as_millis() as u64)
 }
 
-fn invitation(operator: Uuid, host: Uuid, now: u64, request_mouse: bool) -> Result<SessionRequest, String> {
+fn invitation(
+    operator: Uuid,
+    host: Uuid,
+    now: u64,
+    request_mouse: bool,
+    request_keyboard: bool,
+) -> Result<SessionRequest, String> {
     if operator == host {
         return Err("Não é permitido solicitar suporte para o próprio dispositivo".into());
     }
@@ -65,10 +75,15 @@ fn invitation(operator: Uuid, host: Uuid, now: u64, request_mouse: bool) -> Resu
         session_id: SessionId(Uuid::new_v4()),
         operator: DeviceId(operator),
         host: DeviceId(host),
-        requested: if request_mouse {
-            BTreeSet::from([Capability::Screen, Capability::Input])
-        } else {
-            BTreeSet::from([Capability::Screen])
+        requested: {
+            let mut requested = BTreeSet::from([Capability::Screen]);
+            if request_mouse {
+                requested.insert(Capability::Input);
+            }
+            if request_keyboard {
+                requested.insert(Capability::Keyboard);
+            }
+            requested
         },
         expires_at_ms: now.saturating_add(INVITATION_TTL_MS),
     })
@@ -166,10 +181,20 @@ async fn read_device_id() -> Result<Uuid, String> {
 }
 
 #[tauri::command]
-pub async fn create_session_request(target_id: String, request_mouse: bool) -> Result<SessionReceipt, String> {
+pub async fn create_session_request(
+    target_id: String,
+    request_mouse: bool,
+    request_keyboard: bool,
+) -> Result<SessionReceipt, String> {
     let target = Uuid::parse_str(target_id.trim())
         .map_err(|_| "Digite o ID completo e válido do dispositivo remoto".to_string())?;
-    let request = invitation(read_device_id().await?, target, timestamp_ms()?, request_mouse)?;
+    let request = invitation(
+        read_device_id().await?,
+        target,
+        timestamp_ms()?,
+        request_mouse,
+        request_keyboard,
+    )?;
     let data = serde_json::to_vec(&request).map_err(|_| "Falha ao criar convite".to_string())?;
     let raw = signed_request(Method::POST, "/v1/sessions".to_owned(), data).await?;
     serde_json::from_slice(&raw).map_err(|_| "Resposta inválida para convite".to_string())
@@ -205,12 +230,19 @@ pub async fn decide_session(
     session_id: String,
     approve: bool,
     grant_mouse: bool,
+    grant_keyboard: bool,
 ) -> Result<SessionReceipt, String> {
     let id = parse_session_id(&session_id)?;
-    let body = if approve && grant_mouse {
-        br#"{"approve":true,"granted":["screen","input"]}"#.to_vec()
-    } else if approve {
-        br#"{"approve":true,"granted":["screen"]}"#.to_vec()
+    let body = if approve {
+        let mut granted = BTreeSet::from([Capability::Screen]);
+        if grant_mouse {
+            granted.insert(Capability::Input);
+        }
+        if grant_keyboard {
+            granted.insert(Capability::Keyboard);
+        }
+        serde_json::to_vec(&serde_json::json!({"approve":true, "granted":granted}))
+            .map_err(|_| "Falha ao criar autorização".to_string())?
     } else {
         br#"{"approve":false,"granted":[]}"#.to_vec()
     };
@@ -234,6 +266,14 @@ pub async fn end_session(session_id: String) -> Result<SessionReceipt, String> {
         let mut current = ENABLED_HOST_MOUSE
             .lock()
             .map_err(|_| "Falha no controle local do mouse".to_string())?;
+        if *current == Some(id) {
+            *current = None;
+        }
+    }
+    {
+        let mut current = ENABLED_HOST_KEYBOARD
+            .lock()
+            .map_err(|_| "Falha no controle local do teclado".to_string())?;
         if *current == Some(id) {
             *current = None;
         }
@@ -394,6 +434,137 @@ pub async fn poll_host_mouse(session_id: String) -> Result<usize, String> {
         .map_err(|_| "Falha na thread nativa de mouse".to_string())?
 }
 
+fn host_keyboard_is_enabled(id: Uuid) -> Result<bool, String> {
+    Ok(*ENABLED_HOST_KEYBOARD
+        .lock()
+        .map_err(|_| "Falha no controle local do teclado".to_string())?
+        == Some(id))
+}
+
+#[tauri::command]
+pub async fn send_remote_keyboard(
+    session_id: String,
+    event: KeyboardEvent,
+) -> Result<(), String> {
+    let id = parse_session_id(&session_id)?;
+    event
+        .validate()
+        .map_err(|_| "Entrada de teclado inválida".to_string())?;
+    let body = serde_json::to_vec(&event)
+        .map_err(|_| "Falha ao codificar teclado".to_string())?;
+    signed_request(Method::POST, format!("/v1/sessions/{id}/keyboard"), body).await?;
+    Ok(())
+}
+
+/// Disabling always succeeds locally without network; enabling requires the
+/// host to explicitly grant Keyboard and activate this foreground application.
+#[tauri::command]
+pub async fn configure_host_keyboard(session_id: String, enabled: bool) -> Result<(), String> {
+    let id = parse_session_id(&session_id)?;
+    if !enabled {
+        let mut current = ENABLED_HOST_KEYBOARD
+            .lock()
+            .map_err(|_| "Falha no controle local do teclado".to_string())?;
+        if *current == Some(id) {
+            *current = None;
+        }
+        return Ok(());
+    }
+    if !cfg!(target_os = "windows") {
+        return Err("Teclado remoto disponível apenas no Windows".to_string());
+    }
+    let authorized = list_active_authorizations().await?.iter().any(|item| {
+        item.session_id == id
+            && item.granted.contains(&Capability::Keyboard)
+            && item.granted.contains(&Capability::Screen)
+    });
+    if !authorized {
+        return Err("O host não autorizou entrada de teclado para esta sessão".to_string());
+    }
+    // Drain stale events before opening the local injection gate.
+    let raw = signed_request(Method::GET, format!("/v1/sessions/{id}/keyboard"), vec![]).await?;
+    let _: Vec<KeyboardEvent> = serde_json::from_slice(&raw)
+        .map_err(|_| "Resposta inválida do canal de teclado".to_string())?;
+    *ENABLED_HOST_KEYBOARD
+        .lock()
+        .map_err(|_| "Falha no controle local do teclado".to_string())? = Some(id);
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn apply_keyboard_batch(id: Uuid, events: Vec<KeyboardEvent>) -> Result<usize, String> {
+    use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+    let mut backend = Enigo::new(&Settings::default())
+        .map_err(|_| "O Windows não inicializou o teclado remoto".to_string())?;
+    let mut applied = 0;
+    for event in events {
+        if !host_keyboard_is_enabled(id)? {
+            break;
+        }
+        event.validate().map_err(|_| "Comando de teclado inválido".to_string())?;
+        match event {
+            KeyboardEvent::Text { value } => backend
+                .text(&value)
+                .map_err(|_| "O Windows recusou a digitação remota".to_string())?,
+            KeyboardEvent::Key { key } => {
+                let native = match key {
+                    KeyboardKey::Enter => Key::Return,
+                    KeyboardKey::Backspace => Key::Backspace,
+                    KeyboardKey::Tab => Key::Tab,
+                    KeyboardKey::Escape => Key::Escape,
+                    KeyboardKey::Delete => Key::Delete,
+                    KeyboardKey::ArrowUp => Key::UpArrow,
+                    KeyboardKey::ArrowDown => Key::DownArrow,
+                    KeyboardKey::ArrowLeft => Key::LeftArrow,
+                    KeyboardKey::ArrowRight => Key::RightArrow,
+                    KeyboardKey::Home => Key::Home,
+                    KeyboardKey::End => Key::End,
+                    KeyboardKey::PageUp => Key::PageUp,
+                    KeyboardKey::PageDown => Key::PageDown,
+                };
+                backend
+                    .key(native, Direction::Click)
+                    .map_err(|_| "O Windows recusou a tecla remota".to_string())?;
+            }
+        }
+        applied += 1;
+    }
+    Ok(applied)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn apply_keyboard_batch(_id: Uuid, _events: Vec<KeyboardEvent>) -> Result<usize, String> {
+    Err("Teclado remoto ainda não implementado neste sistema".to_string())
+}
+
+#[tauri::command]
+pub async fn poll_host_keyboard(session_id: String) -> Result<usize, String> {
+    let id = parse_session_id(&session_id)?;
+    if !host_keyboard_is_enabled(id)? {
+        return Err("Teclado remoto está desligado neste host".to_string());
+    }
+    let raw = signed_request(Method::GET, format!("/v1/sessions/{id}/keyboard"), vec![]).await?;
+    let events: Vec<KeyboardEvent> = serde_json::from_slice(&raw)
+        .map_err(|_| "Lote de teclado remoto inválido".to_string())?;
+    if events.len() > 16 || events.iter().any(|event| event.validate().is_err()) {
+        return Err("Lote de teclado ultrapassou os limites".to_string());
+    }
+    if events.is_empty() || !host_keyboard_is_enabled(id)? {
+        return Ok(0);
+    }
+    let authorized = list_active_authorizations().await?.iter().any(|item| {
+        item.session_id == id
+            && item.granted.contains(&Capability::Keyboard)
+            && item.granted.contains(&Capability::Screen)
+    });
+    if !authorized {
+        return Err("Permissão de teclado encerrada".to_string());
+    }
+    tauri::async_runtime::spawn_blocking(move || apply_keyboard_batch(id, events))
+        .await
+        .map_err(|_| "Falha na execução nativa de teclado".to_string())?
+}
+
 /// Host-only on/off switch for the frame channel; changing to false clears
 /// server-side pixels and rejects any late upload from an older capture.
 #[tauri::command]
@@ -496,7 +667,7 @@ mod tests {
     fn invitation_only_requests_screen_and_has_short_expiry() {
         let operator = Uuid::new_v4();
         let host = Uuid::new_v4();
-        let request = invitation(operator, host, 1_000, false).unwrap();
+        let request = invitation(operator, host, 1_000, false, false).unwrap();
         assert_eq!(request.operator.0, operator);
         assert_eq!(request.host.0, host);
         assert_eq!(request.expires_at_ms, 121_000);
@@ -509,8 +680,8 @@ mod tests {
     fn mouse_is_never_requested_without_opt_in_and_coordinates_are_bounded() {
         let source = Uuid::new_v4();
         let dest = Uuid::new_v4();
-        let view = invitation(source, dest, 100, false).unwrap();
-        let control = invitation(source, dest, 100, true).unwrap();
+        let view = invitation(source, dest, 100, false, false).unwrap();
+        let control = invitation(source, dest, 100, true, false).unwrap();
         assert_eq!(view.requested, BTreeSet::from([Capability::Screen]));
         assert_eq!(
             control.requested,
@@ -523,9 +694,25 @@ mod tests {
     }
 
     #[test]
+    fn keyboard_must_be_requested_separately_from_mouse() {
+        let source = Uuid::new_v4();
+        let dest = Uuid::new_v4();
+        let only_keyboard = invitation(source, dest, 1_000, false, true).unwrap();
+        let both = invitation(source, dest, 1_000, true, true).unwrap();
+        assert_eq!(
+            only_keyboard.requested,
+            BTreeSet::from([Capability::Screen, Capability::Keyboard])
+        );
+        assert_eq!(
+            both.requested,
+            BTreeSet::from([Capability::Screen, Capability::Keyboard, Capability::Input])
+        );
+    }
+
+    #[test]
     fn self_invitation_and_invalid_session_ids_fail_closed() {
         let id = Uuid::new_v4();
-        assert!(invitation(id, id, 1_000, true).is_err());
+        assert!(invitation(id, id, 1_000, true, true).is_err());
         assert!(parse_session_id("not-a-uuid").is_err());
         assert_eq!(parse_session_id(&id.to_string()), Ok(id));
     }
