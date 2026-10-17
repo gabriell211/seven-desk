@@ -21,6 +21,17 @@ export async function initializeIdentity(): Promise<string> {
   return invoke<string>("initialize_identity");
 }
 
+/** Local development signaling only. Signing happens in the native process. */
+export async function registerLocalDevice(): Promise<string> {
+  if (!isTauri()) throw new Error("Registro disponível apenas no aplicativo instalado.");
+  return invoke<string>("register_local_device");
+}
+
+export async function heartbeatLocalDevice(): Promise<string> {
+  if (!isTauri()) throw new Error("Heartbeat disponível apenas no aplicativo instalado.");
+  return invoke<string>("heartbeat_local_device");
+}
+
 export async function getLocalStatus(): Promise<LocalStatus | null> {
   if (!isTauri()) return null;
   return invoke<LocalStatus>("local_status");
