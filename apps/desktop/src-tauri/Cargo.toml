@@ -16,6 +16,9 @@ serde = { version = "1.0", features = ["derive"] }
 seven-identity = { path = "../../../crates/identity" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 uuid = { version = "1", features = ["v4"] }
+seven-protocol = { path = "../../../crates/protocol" }
+serde_json = "1"
+
 
 [build-dependencies]
 tauri-build = "2.7.2"
