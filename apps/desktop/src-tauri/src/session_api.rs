@@ -62,6 +62,12 @@ pub struct ActiveOperatorSession {
     expires_at_ms: u64,
 }
 
+#[derive(Deserialize)]
+struct PresenceResult {
+    device_id: Uuid,
+    online: bool,
+}
+
 fn timestamp_ms() -> Result<u64, String> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -254,6 +260,21 @@ pub async fn decide_session(
     let path = format!("/v1/sessions/{id}/decision");
     let raw = signed_request(Method::POST, path, body).await?;
     serde_json::from_slice(&raw).map_err(|_| "Resposta inválida para decisão".to_string())
+}
+
+/// Read signed, scoped presence. A saved contact never grants session access.
+#[tauri::command]
+pub async fn check_device_presence(device_id: String) -> Result<bool, String> {
+    let id = Uuid::parse_str(device_id.trim())
+        .map_err(|_| "ID do contato inválido".to_string())?;
+    let path = format!("/v1/devices/{id}/presence");
+    let raw = signed_request(Method::GET, path, vec![]).await?;
+    let result: PresenceResult = serde_json::from_slice(&raw)
+        .map_err(|_| "Resposta inválida de presença".to_string())?;
+    if result.device_id != id {
+        return Err("Identidade de presença não corresponde à consulta".to_string());
+    }
+    Ok(result.online)
 }
 
 #[tauri::command]
