@@ -1,6 +1,12 @@
-name: Seven Desk installers (validation only)
+name: Seven Desk native installer QA
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/desktop/**"
+      - "scripts/generate-icons.mjs"
+      - ".github/workflows/installers.yml"
   workflow_dispatch:
 
 permissions:
@@ -8,11 +14,20 @@ permissions:
 
 jobs:
   installers:
+    name: Installer QA / ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-22.04]
+        include:
+          - os: windows-latest
+            bundles: nsis,msi
+          - os: macos-latest
+            bundles: dmg
+          - os: ubuntu-22.04
+            bundles: deb,rpm
     runs-on: ${{ matrix.os }}
+    env:
+      APPLE_SIGNING_IDENTITY: "-"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -26,18 +41,20 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-      - run: npm install --no-audit --no-fund
-      - run: node scripts/generate-icons.mjs
-      - name: Build native installers
-        run: npm run tauri:build
-      - name: Upload unsigned QA installers
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev pkg-config rpm
+      - name: Install JavaScript dependencies
+        run: npm install --no-audit --no-fund
+      - name: Generate Seven Desk icons
+        run: node scripts/generate-icons.mjs
+      - name: Build installable native packages
+        run: npm run tauri:build -- --bundles ${{ matrix.bundles }}
+      - name: Upload QA packages (NOT A RELEASE)
         uses: actions/upload-artifact@v4
         with:
-          name: seven-desk-qa-${{ matrix.os }}
-          path: |
-            apps/desktop/src-tauri/target/release/bundle/
+          name: seven-desk-unsigned-qa-${{ matrix.os }}
+          path: apps/desktop/src-tauri/target/release/bundle/
           if-no-files-found: error
+          retention-days: 7
 
-# These are QA artifacts, not signed production releases.
-# Do not publish them as final until certificate/notarization and E2E gates pass.
+# These artifacts only verify packaging. They are NOT a support-ready product:
+# no remote media/control yet, and no production code-signing/notarization.
