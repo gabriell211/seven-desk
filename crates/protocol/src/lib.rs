@@ -173,7 +173,8 @@ impl SessionMachine {
     pub fn revoke(&mut self, actor: DeviceId, permission: Capability) -> Result<(), ProtocolError> {
         let SessionState::Active {
             request, granted, ..
-        } = &mut self.state else {
+        } = &mut self.state
+        else {
             return Err(ProtocolError::InvalidTransition);
         };
         if actor != request.host {
@@ -293,7 +294,8 @@ mod tests {
         let r = request();
         let mut sm = SessionMachine::default();
         sm.request(r.clone(), 100).unwrap();
-        sm.accept(r.host, BTreeSet::from([Capability::Screen]), 200).unwrap();
+        sm.accept(r.host, BTreeSet::from([Capability::Screen]), 200)
+            .unwrap();
         assert!(!sm.expire(2_001));
         assert!(sm.expire(200 + MAX_ACTIVE_SESSION_MS));
         assert!(!sm.permits(Capability::Screen, 200 + MAX_ACTIVE_SESSION_MS));

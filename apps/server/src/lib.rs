@@ -263,7 +263,9 @@ async fn revoke(
     let session_id = SessionId(id);
     let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
     let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
-    machine.revoke(actor, input.capability).map_err(|_| ApiError::Forbidden)?;
+    machine
+        .revoke(actor, input.capability)
+        .map_err(|_| ApiError::Forbidden)?;
     Ok(Json(SessionResponse {
         session_id,
         status: if matches!(machine.state(), SessionState::Ended) {
@@ -382,12 +384,7 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
     use seven_security::{device_id, message_to_sign};
 
-    fn signed_request(
-        key: &SigningKey,
-        method: &str,
-        path: &str,
-        body: Vec<u8>,
-    ) -> Request<Body> {
+    fn signed_request(key: &SigningKey, method: &str, path: &str, body: Vec<u8>) -> Request<Body> {
         let nonce = Uuid::new_v4();
         let timestamp = now_ms();
         let proof = message_to_sign(method, path, &body, nonce, timestamp).unwrap();
@@ -411,9 +408,11 @@ mod tests {
         let host = SigningKey::from_bytes(&[22_u8; 32]);
 
         for key in [&operator, &host] {
-            let res = service.clone().oneshot(
-                signed_request(key, "POST", "/v1/devices", b"{}".to_vec())
-            ).await.unwrap();
+            let res = service
+                .clone()
+                .oneshot(signed_request(key, "POST", "/v1/devices", b"{}".to_vec()))
+                .await
+                .unwrap();
             assert_eq!(res.status(), StatusCode::OK);
         }
 
@@ -425,48 +424,75 @@ mod tests {
             host: device_id(&host.verifying_key()),
             requested: BTreeSet::from([Capability::Screen, Capability::Input]),
             expires_at_ms: now_ms() + 30_000,
-        }).unwrap();
-        let response = service.clone().oneshot(
-            signed_request(&operator, "POST", "/v1/sessions", body)
-        ).await.unwrap();
+        })
+        .unwrap();
+        let response = service
+            .clone()
+            .oneshot(signed_request(&operator, "POST", "/v1/sessions", body))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::CREATED);
 
         let decision_path = format!("/v1/sessions/{}/decision", session_id.0);
         let grant = serde_json::to_vec(&serde_json::json!({
             "approve": true,
             "granted": ["screen", "input"]
-        })).unwrap();
+        }))
+        .unwrap();
 
-        let unauthorized = service.clone().oneshot(
-            signed_request(&operator, "POST", &decision_path, grant.clone())
-        ).await.unwrap();
+        let unauthorized = service
+            .clone()
+            .oneshot(signed_request(
+                &operator,
+                "POST",
+                &decision_path,
+                grant.clone(),
+            ))
+            .await
+            .unwrap();
         assert_eq!(unauthorized.status(), StatusCode::FORBIDDEN);
 
-        let approved = service.clone().oneshot(
-            signed_request(&host, "POST", &decision_path, grant)
-        ).await.unwrap();
+        let approved = service
+            .clone()
+            .oneshot(signed_request(&host, "POST", &decision_path, grant))
+            .await
+            .unwrap();
         assert_eq!(approved.status(), StatusCode::OK);
 
         let revoke_path = format!("/v1/sessions/{}/revoke", session_id.0);
         let revocation = serde_json::to_vec(&serde_json::json!({
             "capability": "screen"
-        })).unwrap();
-        let blocked = service.clone().oneshot(
-            signed_request(&operator, "POST", &revoke_path, revocation.clone())
-        ).await.unwrap();
+        }))
+        .unwrap();
+        let blocked = service
+            .clone()
+            .oneshot(signed_request(
+                &operator,
+                "POST",
+                &revoke_path,
+                revocation.clone(),
+            ))
+            .await
+            .unwrap();
         assert_eq!(blocked.status(), StatusCode::FORBIDDEN);
 
-        let ended = service.clone().oneshot(
-            signed_request(&host, "POST", &revoke_path, revocation)
-        ).await.unwrap();
+        let ended = service
+            .clone()
+            .oneshot(signed_request(&host, "POST", &revoke_path, revocation))
+            .await
+            .unwrap();
         assert_eq!(ended.status(), StatusCode::OK);
 
         let session_path = format!("/v1/sessions/{}", session_id.0);
-        let final_state = service.clone().oneshot(
-            signed_request(&operator, "GET", &session_path, Vec::new())
-        ).await.unwrap();
+        let final_state = service
+            .clone()
+            .oneshot(signed_request(&operator, "GET", &session_path, Vec::new()))
+            .await
+            .unwrap();
         assert_eq!(final_state.status(), StatusCode::OK);
-        let payload = to_bytes(final_state.into_body(), MAX_PAYLOAD_SIZE).await.unwrap();
+        let payload = to_bytes(final_state.into_body(), MAX_PAYLOAD_SIZE)
+            .await
+            .unwrap();
         assert_eq!(payload.as_ref(), b"\"ended\"");
     }
 
