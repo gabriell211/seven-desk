@@ -42,23 +42,23 @@ O produto prioriza **baixa latência**, **privacidade**, **controle explícito d
 
 ## Funcionalidades
 
-A tabela a seguir é o **escopo-alvo**, não uma lista de funcionalidades prontas.
+A tabela a seguir é o **escopo-alvo**, não uma lista de funcionalidades prontas. A [matriz de rastreabilidade](docs/MATRIZ_FUNCIONAL.md) associa **cada capacidade** às respectivas issues e fases.
 
 | Área | Recursos previstos |
 | --- | --- |
-| Conexões | ID público do dispositivo, apelido, convite de sessão, favoritos, histórico, acesso LAN e remoto |
+| Conexões | ID público do dispositivo, apelido, convite temporário, favoritos, histórico, acesso LAN/WAN, descoberta opt-in e proxy corporativo |
 | Sessão assistida | Solicitar conexão, aceitar/rejeitar, escolher permissões, suspender controle e encerrar |
 | Sessão não assistida | Habilitação explícita pelo proprietário/administrador, credenciais fortes, MFA, restrições por dispositivo e revogação |
 | Visualização | Compartilhamento de tela, seleção de monitor, escalonamento, tela cheia, ajuste dinâmico de qualidade e FPS |
 | Controle | Mouse, teclado, atalhos, mapeamento de teclado, teclas especiais, suporte a layouts e permissões granularizadas |
-| Transferência | Arquivos bidirecionais, arrastar e soltar quando suportado, progresso, integridade e cancelamento |
+| Transferência | Arquivos bidirecionais, gerenciador de dois painéis sem streaming de tela, arrastar e soltar quando suportado, progresso, integridade e cancelamento |
 | Área de transferência | Texto e, em fases posteriores, imagens/arquivos, sempre sujeitos a permissão |
 | Comunicação | Chat de sessão, convites e mensagens de estado |
 | Colaboração | Modo somente visualização, anotações temporárias, sessões com múltiplos participantes autorizados |
 | Gerenciamento | Contatos, grupos, tags, pesquisa, dispositivos confiáveis, favoritos e políticas |
-| Operação | Reinicialização remota autorizada, reconexão, Wake-on-LAN em ambientes compatíveis, execução com serviço instalado |
-| Avançado | Impressão remota, áudio remoto, gravação consentida, modo de privacidade e API de integração |
-| Empresas | Organizações, RBAC, SSO/OIDC, auditoria, políticas, implantação administrada e opção de infraestrutura própria |
+| Operação | Reinicialização remota autorizada, reconexão, serviço nativo independente, terminal opt-in e Wake-on-LAN futuro |
+| Avançado | Tunelamento TCP controlado, VPN opcional futura, impressão remota, áudio remoto, gravação consentida, modo de privacidade e API de integração |
+| Empresas | Organizações, RBAC, SSO/OIDC, namespaces/aliases, auditoria, políticas, provisionamento gerenciado e infraestrutura própria futura |
 | Distribuição | Instalação oficial pelo **Instalador Seven Desk**, com identidade própria, atualização assinada e desinstalação limpa |
 
 ### Jornada principal de suporte
@@ -158,7 +158,7 @@ A distribuição oficial do aplicativo desktop deverá ser feita pelo **Instalad
 | Estado efêmero | Redis (quando justificado) | Presença, rate limit, filas efêmeras e coordenação |
 | Observabilidade | Logs estruturados, métricas e tracing | Diagnóstico com minimização de dados sensíveis |
 
-**Decisões ainda abertas:** transporte definitivo, codec por plataforma, modelo criptográfico E2EE auditável, topologia de relay, empacotamento do serviço e infraestrutura gerenciada/self-hosted. Devem ser decididas por ADRs, protótipos e testes reproduzíveis — não por suposição.
+**Decisões ainda abertas:** transporte definitivo, codec por plataforma, modelo criptográfico E2EE auditável, topologia de relay, empacotamento do serviço, licença e infraestrutura gerenciada/self-hosted. Devem ser decididas por ADRs, protótipos e testes reproduzíveis — não por suposição. Leia a [arquitetura proposta](docs/ARQUITETURA.md).
 
 ### Componentes sugeridos do monorepo
 
@@ -235,7 +235,7 @@ Planejamento organizado por entrega incremental, sem datas ou versões fictícia
 | **P4 — Enterprise / 1.0** | Organizações/RBAC, SSO, relatórios, atualização assinada, observabilidade e documentação operacional | Release checklist completo, requisitos críticos fechados e rollback testado |
 | **P5 — Expansão** | Viewer móvel, impressão remota, Wake-on-LAN, áudio, gravação consentida e infraestrutura própria | Homologação individual por sistema e funcionalidade |
 
-O [roadmap operacional](docs/ROADMAP.md) reúne as 48 issues por fase e seus gates de homologação; acompanhe também as [issues do projeto](https://github.com/gabriell211/seven-desk/issues). **Uma versão 1.0 só deve ser publicada após cumprir seus critérios de homologação.**
+O [roadmap operacional](docs/ROADMAP.md) reúne as **73 issues** por fase e seus gates de homologação. Veja a [matriz funcional](docs/MATRIZ_FUNCIONAL.md), os [critérios de homologação](docs/HOMOLOGACAO.md) e a [auditoria de alinhamento](docs/AUDITORIA_ALINHAMENTO.md); acompanhe também as [issues do projeto](https://github.com/gabriell211/seven-desk/issues). **Uma versão 1.0 só deve ser publicada após cumprir seus critérios de homologação.**
 
 ## Desenvolvimento e contribuição
 
@@ -246,7 +246,7 @@ O [roadmap operacional](docs/ROADMAP.md) reúne as 48 issues por fase e seus gat
 - Toolchains nativas exigidas por Tauri e pelos módulos de captura de cada sistema.
 - PostgreSQL para serviços centrais; Redis apenas se necessário para o caso de uso.
 
-**Ainda não existem comandos de build, instalação ou servidor verificáveis.** Eles serão publicados com o código inicial, sem instruções fictícias.
+**Ainda não existem comandos de build, instalação ou servidor verificáveis.** Eles serão publicados com o código inicial, sem instruções fictícias. O [guia de contribuição](CONTRIBUTING.md) descreve como validar mudanças e reportar evidências.
 
 ### Fluxo de contribuição
 
