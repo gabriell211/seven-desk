@@ -545,9 +545,14 @@ async fn enqueue_input(
     let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
     let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
     authorized_input_peer(machine, operator, true, now)?;
-    let mut queues = state.input_queues.lock().map_err(|_| ApiError::Unavailable)?;
+    let mut queues = state
+        .input_queues
+        .lock()
+        .map_err(|_| ApiError::Unavailable)?;
     queues.retain(|_, queue| {
-        queue.events.retain(|(at, _)| now.saturating_sub(*at) <= INPUT_EVENT_TTL_MS);
+        queue
+            .events
+            .retain(|(at, _)| now.saturating_sub(*at) <= INPUT_EVENT_TTL_MS);
         !queue.events.is_empty()
             || queue
                 .last_accepted_ms
@@ -584,7 +589,10 @@ async fn dequeue_input(
     let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
     let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
     authorized_input_peer(machine, host, false, now)?;
-    let mut queues = state.input_queues.lock().map_err(|_| ApiError::Unavailable)?;
+    let mut queues = state
+        .input_queues
+        .lock()
+        .map_err(|_| ApiError::Unavailable)?;
     let mut batch = Vec::new();
     if let Some(queue) = queues.get_mut(&session_id) {
         while let Some((at, event)) = queue.events.pop_front() {
@@ -824,7 +832,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/v1/sessions/{id}/screen-delivery",
             post(configure_screen_delivery),
         )
-        .route("/v1/sessions/{id}/input", get(dequeue_input).post(enqueue_input))
+        .route(
+            "/v1/sessions/{id}/input",
+            get(dequeue_input).post(enqueue_input),
+        )
         .route("/v1/sessions/{id}/decision", post(decide))
         .route("/v1/sessions/{id}/revoke", post(revoke))
         .with_state(state)
@@ -1531,7 +1542,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(accepted.status(), StatusCode::ACCEPTED);
-        assert_eq!(state.input_queues.lock().unwrap()[&session_id].events.len(), 1);
+        assert_eq!(
+            state.input_queues.lock().unwrap()[&session_id].events.len(),
+            1
+        );
 
         // Host gets a single bounded batch. Replaying the same request does
         // not repeat OS input events, and rate limiting survives a dequeue.
@@ -1551,6 +1565,15 @@ mod tests {
             .unwrap();
         let raw = to_bytes(again.into_body(), MAX_PAYLOAD_SIZE).await.unwrap();
         assert_eq!(raw.as_ref(), b"[]");
+        // Force a deterministic recently accepted timestamp instead of
+        // assuming a busy CI runner can execute within 20 milliseconds.
+        state
+            .input_queues
+            .lock()
+            .unwrap()
+            .get_mut(&session_id)
+            .unwrap()
+            .last_accepted_ms = Some(now_ms().saturating_add(1_000));
         let too_fast = service
             .clone()
             .oneshot(signed_request(&operator, "POST", &path, move_event.clone()))
@@ -1559,7 +1582,13 @@ mod tests {
         assert_eq!(too_fast.status(), StatusCode::TOO_MANY_REQUESTS);
 
         // Clear interval in test state instead of introducing sleeps.
-        state.input_queues.lock().unwrap().get_mut(&session_id).unwrap().last_accepted_ms = Some(0);
+        state
+            .input_queues
+            .lock()
+            .unwrap()
+            .get_mut(&session_id)
+            .unwrap()
+            .last_accepted_ms = Some(0);
         let accepted = service
             .clone()
             .oneshot(signed_request(&operator, "POST", &path, move_event))
@@ -1673,7 +1702,11 @@ mod tests {
         assert_eq!(approved.status(), StatusCode::OK);
         let pointer_path = format!("/v1/sessions/{}/input", id.0);
         for (key, method, body) in [
-            (&operator, "POST", br#"{"type":"move","x":1,"y":1}"#.to_vec()),
+            (
+                &operator,
+                "POST",
+                br#"{"type":"move","x":1,"y":1}"#.to_vec(),
+            ),
             (&host, "GET", vec![]),
         ] {
             let res = service
