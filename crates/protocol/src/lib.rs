@@ -488,7 +488,7 @@ mod tests {
         .is_ok());
         assert_eq!(
             KeyboardEvent::Text {
-                value: "a\\nb".replace("\\n", "\n"),
+                value: "a\nb".into(),
             }
             .validate(),
             Err(ProtocolError::InvalidInputEvent)
