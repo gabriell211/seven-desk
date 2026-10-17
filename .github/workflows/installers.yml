@@ -1,0 +1,43 @@
+name: Seven Desk installers (validation only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  installers:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.90.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - run: npm install --no-audit --no-fund
+      - run: node scripts/generate-icons.mjs
+      - name: Build native installers
+        run: npm run tauri:build
+      - name: Upload unsigned QA installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: seven-desk-qa-${{ matrix.os }}
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/
+          if-no-files-found: error
+
+# These are QA artifacts, not signed production releases.
+# Do not publish them as final until certificate/notarization and E2E gates pass.
