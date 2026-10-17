@@ -535,7 +535,11 @@ async fn terminate(
     let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
     machine.terminate(actor).map_err(|_| ApiError::Forbidden)?;
     // Purge cached private pixels before releasing the session lock.
-    state.frames.lock().map_err(|_| ApiError::Unavailable)?.remove(&session_id);
+    state
+        .frames
+        .lock()
+        .map_err(|_| ApiError::Unavailable)?
+        .remove(&session_id);
     Ok(Json(SessionResponse {
         session_id,
         status: "ended",
@@ -566,7 +570,11 @@ async fn revoke(
         .map_err(|_| ApiError::Forbidden)?;
     let ended = matches!(machine.state(), SessionState::Ended);
     if ended || input.capability == Capability::Screen {
-        state.frames.lock().map_err(|_| ApiError::Unavailable)?.remove(&session_id);
+        state
+            .frames
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
+            .remove(&session_id);
     }
     Ok(Json(SessionResponse {
         session_id,
@@ -600,7 +608,11 @@ async fn get_session(
         return Err(ApiError::Forbidden);
     }
     if machine.expire(now_ms()) {
-        state.frames.lock().map_err(|_| ApiError::Unavailable)?.remove(&SessionId(id));
+        state
+            .frames
+            .lock()
+            .map_err(|_| ApiError::Unavailable)?
+            .remove(&SessionId(id));
     }
     let value = match machine.state() {
         SessionState::AwaitingConsent(_) => PublicState::AwaitingConsent,
