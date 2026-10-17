@@ -11,7 +11,6 @@ use std::{
 };
 use uuid::Uuid;
 
-
 const INVITATION_TTL_MS: u64 = 120_000;
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
@@ -166,8 +165,7 @@ pub async fn list_pending_invitations() -> Result<Vec<PendingInvitation>, String
     serde_json::from_slice(&raw).map_err(|_| "Resposta inválida para convites".to_string())
 }
 
-/// Approval always grants screen negotiation only; it never enables input.
-/// The session is metadata-only until separately authorized media is built.
+/// List active grants for the authenticated host only.
 #[tauri::command]
 pub async fn list_active_authorizations() -> Result<Vec<ActiveAuthorization>, String> {
     let raw = signed_request(Method::GET, "/v1/sessions/host/active".to_owned(), vec![]).await?;
