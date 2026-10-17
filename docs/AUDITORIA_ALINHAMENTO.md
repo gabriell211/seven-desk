@@ -31,6 +31,24 @@
 | Dependências inconsistentes e sobreposição de escopo | Ajustadas #14, #38, #45, #66 |
 | Mac: formato do bundle oficial | DMG Tauri como padrão; PKG opcional para assistente específico |
 
+## Validação automatizada final do planejamento
+
+**Resultado em 16/10/2026, após correções:**
+
+| Verificação | Resultado |
+| --- | --- |
+| Issues catalogadas | **73** (P0: 14, P1: 8, P2: 18, P3: 10, P4: 9, P5: 14) |
+| Dependências apontando para issues inexistentes | **0** |
+| Ciclos de dependências | **0** |
+| Dependências para fases futuras | **0** |
+| Issues sem critérios de aceite | **0** |
+| Issues sem seção de testes/validação | **0** |
+| Links Markdown internos inválidos nos documentos auditados | **0** |
+| Menções à marca proibida pelo requisito editorial em documentos/issues | **0** |
+| Pull requests encontrados | **0** |
+
+O verificador inspecionou os corpos das 73 issues e os arquivos documentais existentes. Esses resultados atestam **consistência textual/estrutural da documentação**, não compilação, segurança comprovada, testes de software ou ausência de futuras lacunas.
+
 ## Decisões bloqueantes — não confundir planejamento com aprovação
 
 1. **Transporte:** WebRTC/ICE/TURN ou QUIC/relay após PoC e avaliação de autenticação (#9).
