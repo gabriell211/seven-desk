@@ -18,7 +18,7 @@ Esta documentação descreve o **código que está começando a existir**. Não 
 - Rust 1.90.0 e Cargo.
 - Node.js 22 LTS e npm. Sem Docker obrigatório.
 - Windows: dependências nativas exigidas pelo Tauri 2, MSVC Build Tools e WebView2 quando aplicável.
-- Linux: WebKit2GTK, librsvg, appindicator e dependências de sistema; consulte a documentação Tauri.
+- Linux: WebKit2GTK, librsvg, appindicator, libdbus-1-dev, pkg-config e dependências de sistema; consulte a documentação Tauri.
 - macOS: Xcode Command Line Tools.
 
 ## Comandos
