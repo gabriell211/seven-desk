@@ -12,7 +12,7 @@
 </div>
 
 > [!IMPORTANT]
-> **Status: planejamento inicial.** Este repositório ainda não contém uma implementação funcional. Os recursos e tecnologias descritos representam **requisitos e decisões propostas**, não funcionalidades já entregues. O progresso deve ser acompanhado pelas [issues](https://github.com/gabriell211/seven-desk/issues) e por versões publicadas, quando existirem.
+> **Status: desenvolvimento pré-alfa.** O código inicial já inclui contratos Rust, autenticação de requisições, sinalização local de desenvolvimento e interface desktop React/Tauri. **Ainda não há transmissão de tela ou controle remoto funcional e nenhuma plataforma foi homologada**. As funcionalidades descritas abaixo são principalmente requisitos planejados. Veja [o status técnico](docs/IMPLEMENTACAO.md) e as [issues](https://github.com/gabriell211/seven-desk/issues).
 
 ## Visão geral
 
@@ -248,7 +248,7 @@ O [roadmap operacional](docs/ROADMAP.md) reúne as **73 issues** por fase e seus
 - Toolchains nativas exigidas por Tauri e pelos módulos de captura de cada sistema.
 - PostgreSQL para serviços centrais; Redis apenas se necessário para o caso de uso.
 
-**Ainda não existem comandos de build, instalação ou servidor verificáveis.** Eles serão publicados com o código inicial, sem instruções fictícias. O [guia de contribuição](CONTRIBUTING.md) descreve como validar mudanças e reportar evidências.
+**Comandos de desenvolvimento e compilação do código pré-alfa** estão registrados em [docs/IMPLEMENTACAO.md](docs/IMPLEMENTACAO.md). A execução dos testes do núcleo Rust, o build React e o cargo check Tauri foram validados pelo CI. Os instaladores definitivos e a conexão remota real ainda não foram homologados. O [guia de contribuição](CONTRIBUTING.md) descreve como validar mudanças e reportar evidências.
 
 ### Fluxo de contribuição
 

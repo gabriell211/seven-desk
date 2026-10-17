@@ -13,6 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [dependencies]
 tauri = { version = "2.12.3" }
 serde = { version = "1.0", features = ["derive"] }
+seven-identity = { path = "../../../crates/identity" }
 
 [build-dependencies]
 tauri-build = "2.7.2"
