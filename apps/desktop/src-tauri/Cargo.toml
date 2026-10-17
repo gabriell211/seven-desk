@@ -14,6 +14,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri = { version = "2.12.3" }
 serde = { version = "1.0", features = ["derive"] }
 seven-identity = { path = "../../../crates/identity" }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+uuid = { version = "1", features = ["v4"] }
 
 [build-dependencies]
 tauri-build = "2.7.2"
