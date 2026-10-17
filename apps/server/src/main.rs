@@ -17,11 +17,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr: SocketAddr = std::env::var("SEVEN_BIND")
         .unwrap_or_else(|_| "127.0.0.1:43821".to_string())
         .parse()?;
-    if !addr.ip().is_loopback()
-        && std::env::var("SEVEN_UNSAFE_ALLOW_REMOTE").as_deref() != Ok("I_ACCEPT_THE_RISK")
-    {
+    if !addr.ip().is_loopback() {
         return Err(
-            "remote binding is disabled until TLS/deployment hardening is completed".into(),
+            "Only loopback binding is permitted. Configure a restricted HTTPS reverse proxy or VPN for controlled multi-host tests.".into(),
         );
     }
     let listener = tokio::net::TcpListener::bind(addr).await?;

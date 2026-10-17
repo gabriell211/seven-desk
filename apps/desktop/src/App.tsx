@@ -115,7 +115,7 @@ export function App() {
         throw new Error("A identidade registrada não corresponde a este dispositivo.");
       }
       setPresenceActive(true);
-      setFeedback("Dispositivo registrado no servidor local de desenvolvimento.");
+      setFeedback("Dispositivo registrado no servidor configurado de desenvolvimento.");
     } catch (error: unknown) {
       setPresenceActive(false);
       setFeedback(error instanceof Error ? error.message : "Falha ao registrar dispositivo.");
@@ -294,7 +294,7 @@ export function App() {
         <div className="sidebar-footer">
           <span className="indicator off" aria-hidden="true" />
           <div><strong>{hostAvailable ? "Serviço disponível" : "Serviço indisponível"}</strong>
-            <small>{backendReady ? "Servidor local online" : "Servidor local offline"}</small></div>
+            <small>{backendReady ? "Servidor configurado online" : "Servidor configurado offline"}</small></div>
         </div>
       </aside>
 
@@ -340,12 +340,12 @@ export function App() {
                       disabled={!backendReady || registering || presenceActive}
                       onClick={() => void registerWithLocalServer()}
                     >
-                      {registering ? "Registrando..." : presenceActive ? "Presença local ativa" : "Registrar no servidor local"}
+                      {registering ? "Registrando..." : presenceActive ? "Presença local ativa" : "Registrar no servidor"}
                     </button>
                     <p className="foot-note" role="status">
                       {presenceActive
                         ? "Presença temporária ativa. Não habilita captura nem acesso remoto."
-                        : "Registro experimental e voluntário, disponível apenas com o servidor local iniciado."}
+                        : "Registro experimental e voluntário, disponível apenas com o servidor de desenvolvimento acessível."}
                     </p>
                   </div>
                 )}
@@ -465,7 +465,7 @@ export function App() {
                 </select></div>
               <div className="setting-row"><div><strong>Sistema operacional</strong><p>Detectado pelo runtime nativo.</p></div>
                 <span className="setting-value">{status ? `${status.operating_system} · ${status.architecture}` : "Navegador / indisponível"}</span></div>
-              <div className="setting-row"><div><strong>Backend local</strong><p>Servidor de desenvolvimento, sem exposição pública.</p></div>
+              <div className="setting-row"><div><strong>Servidor de desenvolvimento</strong><p>Conexão nativa com HTTPS fora do loopback; não homologada para produção.</p></div>
                 <span className="setting-value">{backendReady ? "Online" : "Offline"}</span></div>
               <div className="setting-row"><div><strong>Serviço remoto</strong><p>É necessário para captura, entrada e acesso autorizado.</p></div>
                 <span className="setting-value">{hostAvailable ? "Disponível" : "Não configurado"}</span></div>

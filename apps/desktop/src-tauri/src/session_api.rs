@@ -11,7 +11,7 @@ use std::{
 };
 use uuid::Uuid;
 
-const API_BASE: &str = "http://127.0.0.1:43821";
+
 const INVITATION_TTL_MS: u64 = 120_000;
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
@@ -92,13 +92,14 @@ async fn signed_request(method: Method, path: String, body: Vec<u8>) -> Result<V
     } else {
         MAX_RESPONSE_BYTES
     };
+    let base = crate::configured_server_url()?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .no_proxy()
         .build()
         .map_err(|_| "Falha ao abrir conexão local".to_string())?;
     let mut response = client
-        .request(method, format!("{API_BASE}{path}"))
+        .request(method, format!("{base}{path}"))
         .header("x-seven-key", proof.public_key_hex)
         .header("x-seven-signature", proof.signature_hex)
         .header("x-seven-nonce", proof.nonce.to_string())

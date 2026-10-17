@@ -70,6 +70,8 @@ jobs:
       - run: node scripts/generate-icons.mjs
       - name: Compile native app
         run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
+      - name: Test native HTTPS endpoint validation
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib server_config::tests
 
   tauri-windows:
     name: Tauri native compilation (Windows)

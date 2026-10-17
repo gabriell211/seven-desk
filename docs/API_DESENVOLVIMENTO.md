@@ -39,7 +39,7 @@ A mensagem canônica assinada é formada pelas linhas `seven-desk/request/v1`, m
 
 No aplicativo Tauri instalado, o usuário pode **Ativar** uma identidade segura e escolher **Registrar no servidor local**. O registro é assinado no processo Rust, não no React. Com a janela aberta e a presença ativada, o frontend solicita um heartbeat nativo a cada 30 segundos. Ao falhar, o estado muda para inativo e exige novo registro manual.
 
-O comando nativo usa exclusivamente o endpoint de desenvolvimento `http://127.0.0.1:43821`, com timeout de 5 segundos e assinatura nova por requisição. Não há configuração para expor credenciais a JavaScript nem para conectar a servidores arbitrários. O aplicativo ainda **não inicia sessão remota**, pois captura e serviço do host permanecem pendentes.
+O comando nativo usa `http://127.0.0.1:43821` por padrão ou a URL definida em `SEVEN_DESK_DEV_SERVER_URL`, validada no Rust: **HTTPS obrigatório fora do loopback**, sem credenciais nem caminhos extras, timeout de 5 segundos e nova assinatura por requisição. A chave privada não sai do Rust. Existe captura manual estática no Windows; streaming contínuo e controle de teclado/mouse permanecem pendentes.
 
 ## Presença (experimental)
 
@@ -58,15 +58,15 @@ Depois de ativar a identidade e registrar a presença no servidor de desenvolvim
 3. O solicitante consulta o estado a cada três segundos; pode cancelar. O host pode ver as autorizações ativas com uma consulta autenticada, inclusive após reabrir o aplicativo (enquanto o servidor mantiver as sessões), e encerrar qualquer uma delas. Ambas as ações são assinadas e verificadas no backend.
 4. A interface indica explicitamente que uma negociação autorizada **não significa que os pixels estejam sendo transmitidos**. Nenhuma API de captura, injeção de teclado/mouse, porta WAN ou acesso não assistido é ativada.
 
-**Limite importante:** esta etapa só negocia metadados de sessão. O servidor bindado em `127.0.0.1` não conecta dois computadores diferentes via Internet. Para usar o recurso em duas máquinas reais faltam control plane seguro acessível de ambas, transporte autenticado e serviço do host. Não exponha o servidor experimental na rede para contornar essa limitação.
+**Limite importante:** a API local continua escutando em `127.0.0.1`. Dois computadores podem apontar para o mesmo servidor através de **HTTPS, proxy TLS e VPN de laboratório**, conforme [teste multimaquina](TESTE_MULTIMAQUINA.md). Ainda não existe E2EE, streaming ou infraestrutura pronta para Internet aberta. Não exponha a porta 43821 diretamente à rede.
 
-## Canal experimental de quadros de tela (localhost)
+## Canal experimental de quadros de tela (loopback no servidor e HTTPS/VPN no cliente)
 
 O backend agora dispõe de um **buffer temporário real de bytes PNG**, não um vídeo simulado: host autenticado publica e operador autenticado consulta o último quadro de uma sessão explicitamente aprovada com capacidade `screen`. A API verifica **papel host/operador e autorização vigente a cada solicitação**, inclusive depois de revogação; nenhum dispositivo que não participa da sessão pode baixar os pixels. A resposta é `image/png` com `Cache-Control: no-store`.
 
 **Limites da prova de conceito:** cada quadro tem no máximo 2 MiB, o cache só mantém até 8 sessões simultâneas e só disponibiliza quadros recebidos nos últimos 15 segundos. Os bytes ficam **apenas em memória**. O servidor verifica assinatura, cabeçalho IHDR e dimensões declaradas (máximo 8192 × 8192), mas a decodificação da imagem ainda deve ser tratada como entrada não confiável. A revogação bloqueia imediatamente novas leituras mesmo antes da limpeza do cache.
 
-**Segurança:** este endpoint só está habilitado no servidor local de desenvolvimento, em `127.0.0.1`. **Não há captura nativa automatizada, stream contínuo, E2EE nem relé entre computadores** nesta entrega. O servidor **não deve** ser exposto à LAN ou Internet. A próxima etapa é integrar captura pelo host, mostrar o frame no viewer e implementar o transporte criptografado remoto antes de anunciar acesso real.
+**Segurança:** o backend continua escutando apenas em `127.0.0.1`. O cliente pode alcançá-lo através de proxy HTTPS restrito à VPN. O servidor intermediário **consegue ler os quadros**; ainda não existe E2EE, streaming contínuo, relay de mídia escalável nem implantação de produção. O frame só é enviado após clique do host e verificação da sessão.
 
 ## Captura manual nativa no Windows (pré-alfa)
 
@@ -74,7 +74,7 @@ O aplicativo Tauri no **Windows** passa a usar a biblioteca Rust [XCap](https://
 
 O programa reduz progressivamente a resolução de capturas grandes antes de codificar PNG, com limite de 2 MiB por quadro. O operador pode clicar em `Ver último quadro autorizado` para baixar a imagem estática da própria sessão através de uma requisição assinada. Nenhuma captura fica salva em disco pelo fluxo implementado. Encerrar a autorização impede novas leituras e remove a imagem da visualização daquele solicitante.
 
-**Limitações:** somente Windows captura nesta primeira etapa; não existe captura automática, streaming contínuo, mouse, teclado ou áudio remoto. O backend ainda aceita conexões **apenas em localhost**, portanto o fluxo completo entre **dois computadores** continua bloqueado por transporte seguro e implantação correta do servidor. O CI verifica compilação em Windows/Linux, mas **não prova que o prompt de permissão/captura funciona em todos os monitores reais**; testes manuais e E2E são obrigatórios.
+**Limitações:** somente Windows captura nesta primeira etapa; não existe captura automática, streaming contínuo, mouse, teclado ou áudio remoto. O teste **em dois computadores** passa a ser possível mediante backend local + proxy HTTPS restrito à VPN, mas precisa de montagem, execução e evidências reais. O CI verifica compilação em Windows/Linux, não o funcionamento de captura em todos os monitores; E2E e segurança ainda são obrigatórios.
 
 ## Convites de suporte
 
