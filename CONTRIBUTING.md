@@ -1,6 +1,6 @@
 # Contribuindo com Seven Desk
 
-O desenvolvimento deverá preservar segurança, reprodutibilidade, acessibilidade e rastreabilidade. O repositório está em fase de planejamento: não atribua a funcionalidades planejadas status de implementação.
+O desenvolvimento deverá preservar segurança, reprodutibilidade, acessibilidade e rastreabilidade. O repositório está em **pré-alfa**, com código executável e testes automatizados: não atribua a funcionalidades planejadas status de implementação nem confunda CI verde com homologação em dois computadores.
 
 ## Antes de escrever código
 
@@ -14,7 +14,7 @@ O desenvolvimento deverá preservar segurança, reprodutibilidade, acessibilidad
 - Branch curta, objetivo único, commits `feat:`, `fix:`, `docs:`, `test:`, `security:` etc.
 - Referencie issue, descreva decisões, riscos, comportamento antes/depois, plataformas testadas, exceções e procedimentos de rollback.
 - Cobrir caminhos felizes, nulos/vazios/erros, autorização negada e revogação. Não confiar apenas em testes com mocks.
-- Rust com fmt/clippy/test; TypeScript em strict e testes de UI; workflow de CI será implementado em #4.
+- Rust com fmt/clippy/test; TypeScript em strict e testes de UI. Os workflows `Check`, `Seven Desk CI` e `native installer QA` já existem; auditoria de dependências, branch protection e cobertura ampliada permanecem na issue #4.
 - Documentação e contratos devem evoluir junto ao código.
 
 ## Definition of Done
