@@ -72,9 +72,9 @@ export interface ActiveOperatorSession {
 export type SessionState = "awaiting_consent" | "active" | "rejected" | "ended";
 
 /** Restricted to the native desktop; no private keys or raw signed URLs enter JS. */
-export async function requestSupport(targetId: string, requestMouse = false): Promise<SessionReceipt> {
+export async function requestSupport(targetId: string, requestMouse = false, requestKeyboard = false): Promise<SessionReceipt> {
   if (!isTauri()) throw new Error("Disponível somente no aplicativo Seven Desk.");
-  return invoke<SessionReceipt>("create_session_request", { targetId, requestMouse });
+  return invoke<SessionReceipt>("create_session_request", { targetId, requestMouse, requestKeyboard });
 }
 
 export async function pendingInvitations(): Promise<PendingInvitation[]> {
@@ -96,9 +96,10 @@ export async function decideInvitation(
   sessionId: string,
   approve: boolean,
   grantMouse = false,
+  grantKeyboard = false,
 ): Promise<SessionReceipt> {
   if (!isTauri()) throw new Error("É necessário usar o aplicativo instalado.");
-  return invoke<SessionReceipt>("decide_session", { sessionId, approve, grantMouse });
+  return invoke<SessionReceipt>("decide_session", { sessionId, approve, grantMouse, grantKeyboard });
 }
 
 export async function readSessionState(sessionId: string): Promise<SessionState> {
@@ -153,4 +154,27 @@ export async function configureHostMouse(sessionId: string, enabled: boolean): P
 export async function pollHostMouse(sessionId: string): Promise<number> {
   if (!isTauri()) throw new Error("Controle de mouse disponível apenas no aplicativo instalado.");
   return invoke<number>("poll_host_mouse", { sessionId });
+}
+
+/** Restricted non-modifier keyboard events; no Ctrl/Alt/Meta shortcuts. */
+export type RemoteKeyboardEvent =
+  | { type: "text"; value: string }
+  | { type: "key"; key:
+      "enter" | "backspace" | "tab" | "escape" | "delete" |
+      "arrow_up" | "arrow_down" | "arrow_left" | "arrow_right" |
+      "home" | "end" | "page_up" | "page_down" };
+
+export async function sendRemoteKeyboard(sessionId: string, event: RemoteKeyboardEvent): Promise<void> {
+  if (!isTauri()) throw new Error("Teclado remoto disponível apenas no aplicativo instalado.");
+  return invoke<void>("send_remote_keyboard", { sessionId, event });
+}
+
+export async function configureHostKeyboard(sessionId: string, enabled: boolean): Promise<void> {
+  if (!isTauri()) throw new Error("Teclado remoto disponível apenas no aplicativo instalado.");
+  return invoke<void>("configure_host_keyboard", { sessionId, enabled });
+}
+
+export async function pollHostKeyboard(sessionId: string): Promise<number> {
+  if (!isTauri()) throw new Error("Teclado remoto disponível apenas no aplicativo instalado.");
+  return invoke<number>("poll_host_keyboard", { sessionId });
 }
