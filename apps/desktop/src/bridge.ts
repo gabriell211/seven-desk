@@ -50,3 +50,47 @@ export async function getBackendStatus(signal?: AbortSignal): Promise<BackendSta
   if (!("production_ready" in payload) || typeof payload.production_ready !== "boolean") return null;
   return payload as BackendStatus;
 }
+
+export interface SessionReceipt {
+  session_id: string;
+  status: string;
+}
+
+export interface PendingInvitation {
+  session_id: string;
+  operator: string;
+  requested: string[];
+  expires_at_ms: number;
+}
+
+export type SessionState = "awaiting_consent" | "active" | "rejected" | "ended";
+
+/** Restricted to the native desktop; no private keys or raw signed URLs enter JS. */
+export async function requestSupport(targetId: string): Promise<SessionReceipt> {
+  if (!isTauri()) throw new Error("Disponível somente no aplicativo Seven Desk.");
+  return invoke<SessionReceipt>("create_session_request", { targetId });
+}
+
+export async function pendingInvitations(): Promise<PendingInvitation[]> {
+  if (!isTauri()) return [];
+  return invoke<PendingInvitation[]>("list_pending_invitations");
+}
+
+export async function decideInvitation(sessionId: string, approve: boolean): Promise<SessionReceipt> {
+  if (!isTauri()) throw new Error("É necessário usar o aplicativo instalado.");
+  return invoke<SessionReceipt>("decide_session", { sessionId, approve });
+}
+
+export async function readSessionState(sessionId: string): Promise<SessionState> {
+  if (!isTauri()) throw new Error("É necessário usar o aplicativo instalado.");
+  const status = await invoke<string>("session_status", { sessionId });
+  if (status === "awaiting_consent" || status === "active" || status === "rejected" || status === "ended") {
+    return status;
+  }
+  throw new Error("Resposta de sessão não reconhecida.");
+}
+
+export async function terminateSession(sessionId: string): Promise<SessionReceipt> {
+  if (!isTauri()) throw new Error("É necessário usar o aplicativo instalado.");
+  return invoke<SessionReceipt>("end_session", { sessionId });
+}
