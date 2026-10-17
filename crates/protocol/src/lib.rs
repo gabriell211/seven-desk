@@ -430,10 +430,7 @@ mod tests {
         );
         let wire = serde_json::to_vec(&good).unwrap();
         assert_eq!(serde_json::from_slice::<MouseEvent>(&wire).unwrap(), good);
-        assert!(serde_json::from_slice::<MouseEvent>(
-            br#"{"type":"key","key":"super"}"#
-        )
-        .is_err());
+        assert!(serde_json::from_slice::<MouseEvent>(br#"{"type":"key","key":"super"}"#).is_err());
     }
 
     #[test]
