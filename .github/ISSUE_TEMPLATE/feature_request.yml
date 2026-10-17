@@ -1,0 +1,53 @@
+name: "Propor funcionalidade"
+description: "Solicite uma melhoria com justificativa, critérios de aceite e segurança."
+title: "[Feature] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: "Problema que a funcionalidade resolve"
+      description: "Descreva a necessidade do usuário, sem pressupor uma implementação específica."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: "Comportamento desejado"
+      description: "Explique o resultado esperado e a experiência de uso."
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: "Critérios de aceite verificáveis"
+      description: "Liste condições objetivas para considerar a entrega concluída."
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: "Área predominante"
+      options:
+        - "Desktop / Interface"
+        - "Host / Sistema operacional"
+        - "Protocolo / Transporte"
+        - "Segurança / Identidade"
+        - "Servidor / API"
+        - "DevEx / Testes / Distribuição"
+        - "Mobile"
+        - "Outro"
+    validations:
+      required: true
+  - type: textarea
+    id: risk
+    attributes:
+      label: "Riscos, permissões e compatibilidade"
+      description: "Considere autorização do host, privacidade, rede e limitações do sistema operacional."
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: "Sugestão de testes e evidências"
+    validations:
+      required: false
