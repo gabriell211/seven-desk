@@ -577,7 +577,13 @@ export function App() {
         {streamingSession && (
           <div className="panel" role="status" style={{ margin: 18, padding: 15, borderColor: "var(--accent)" }}>
             <strong>● Compartilhamento ativo — até 1 quadro por segundo</strong>
-            <p>A tela principal está sendo capturada enquanto esta janela permanecer aberta. Sem controle remoto ou áudio.</p>
+            <p>A tela principal está sendo capturada enquanto esta janela permanecer aberta. {hostMouseSession === streamingSession ? "Controle de mouse REMOTO ATIVO." : "Mouse remoto desativado."} Sem teclado ou áudio remoto.</p>
+            {hostMouseSession === streamingSession && (
+              <button className="secondary" type="button"
+                onClick={() => { if (hostMouseSession) void toggleHostMouse(hostMouseSession); }}>
+                Parar mouse remoto imediatamente
+              </button>
+            )}
             <button className="secondary" type="button" onClick={() => { if (streamingSession) void stopSharing(streamingSession); }}>Parar compartilhamento agora</button>
             <button className="secondary" type="button" disabled={ending}
               onClick={() => { if (streamingSession) void closeSession(streamingSession); }}>Encerrar autorização de tela</button>
@@ -637,11 +643,17 @@ export function App() {
                 <label className="field-label" htmlFor="target">ID do dispositivo remoto</label>
                 <input id="target" placeholder="Digite o ID do equipamento" autoComplete="off"
                   value={target} onChange={(e) => setTarget(e.target.value.slice(0, 128))} />
+                <label className="foot-note" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input type="checkbox" checked={requestMouse}
+                    onChange={(event) => setRequestMouse(event.target.checked)}
+                    aria-label="Solicitar controle de mouse além da visualização" />
+                  Solicitar também controle de mouse (depende de aceite separado do host)
+                </label>
                 <button className="primary connect" type="button" disabled={!mayConnect}
                   onClick={() => void sendInvitation()}>
                   <span aria-hidden="true">↗</span> {requesting ? "Solicitando..." : "Solicitar autorização"}
                 </button>
-                <div className="foot-note">Quadros estáticos autorizados podem ser atualizados até uma vez por segundo. Sem áudio, mouse ou teclado remoto.</div>
+                <div className="foot-note">Quadros PNG até ~1 FPS. O controle de mouse no Windows exige solicitação e aceite separados. Teclado e áudio remotos ainda não estão disponíveis.</div>
                 {outboundSession && (
                   <div className="foot-note" role="status">
                     <strong>Estado:</strong> {
@@ -657,6 +669,7 @@ export function App() {
                         </button>
                         <button className="secondary" type="button"
                           onClick={() => {
+                            setViewerMouseActive(false);
                             setViewingSession((current) => current === outboundSession.session_id ? null : outboundSession.session_id);
                             setLastFrame(null);
                           }}>
@@ -697,9 +710,25 @@ export function App() {
                 )}
                 {lastFrame && outboundSession?.status === "active" && (
                   <div className="foot-note">
-                    <p>{viewingSession ? "Atualização autorizada de até 1 quadro por segundo." : "Quadro estático autorizado."} Sem áudio nem controle remoto.</p>
-                    <img src={lastFrame} alt="Último quadro da tela remota compartilhado manualmente pelo host"
-                      style={{ width: "100%", maxHeight: 480, objectFit: "contain", borderRadius: 8 }} />
+                    <p>{viewingSession ? "Atualização autorizada de até 1 quadro por segundo." : "Quadro estático autorizado."} {viewerMouseActive ? "Mouse remoto habilitado pelo operador; o host precisa manter a entrada ativa." : "Mouse desativado."} Sem teclado remoto.</p>
+                    {operatorSessions.some((item) =>
+                      item.session_id === outboundSession.session_id && item.granted.includes("input")
+                    ) && (
+                      <button className="secondary" type="button"
+                        onClick={() => setViewerMouseActive((current) => !current)}>
+                        {viewerMouseActive ? "Parar controle do mouse" : "Controlar mouse na imagem"}
+                      </button>
+                    )}
+                    <img src={lastFrame} alt="Imagem do desktop do host, com controle de mouse apenas quando autorizado"
+                      onPointerMove={(event) => forwardViewerPointer(event, "move")}
+                      onPointerUp={(event) => {
+                        if (event.button === 0) forwardViewerPointer(event, "click", "left");
+                        if (event.button === 1) forwardViewerPointer(event, "click", "middle");
+                        if (event.button === 2) forwardViewerPointer(event, "click", "right");
+                      }}
+                      onContextMenu={(event) => { if (viewerMouseActive) event.preventDefault(); }}
+                      style={{ width: "100%", maxHeight: 480, objectFit: "contain", borderRadius: 8,
+                        cursor: viewerMouseActive ? "crosshair" : "default" }} />
                   </div>
                 )}
               </section>
@@ -721,7 +750,13 @@ export function App() {
                         <button className="secondary" type="button" disabled={decisionBusy !== null}
                           onClick={() => void respondToInvitation(invitation.session_id, false)}>Recusar</button>
                         <button className="primary" type="button" disabled={decisionBusy !== null}
-                          onClick={() => void respondToInvitation(invitation.session_id, true)}>Autorizar negociação</button>
+                          onClick={() => void respondToInvitation(invitation.session_id, true)}>Autorizar só tela</button>
+                        {invitation.requested.includes("input") && status?.operating_system === "windows" && (
+                          <button className="primary" type="button" disabled={decisionBusy !== null}
+                            onClick={() => void respondToInvitation(invitation.session_id, true, true)}>
+                            Autorizar tela + mouse
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))
@@ -748,6 +783,13 @@ export function App() {
                           onClick={() => void toggleSharing(item.session_id)}>
                           {streamingSession === item.session_id ? "Parar quadros" : "Iniciar quadros (~1 FPS)"}
                         </button>
+                        {item.granted.includes("input") && status?.operating_system === "windows" && (
+                          <button className="secondary" type="button"
+                            disabled={mouseBusy || (streamingSession !== item.session_id && hostMouseSession !== item.session_id)}
+                            onClick={() => void toggleHostMouse(item.session_id)}>
+                            {hostMouseSession === item.session_id ? "Parar mouse remoto" : "Permitir mouse agora"}
+                          </button>
+                        )}
                         <button className="secondary" type="button" disabled={ending}
                           onClick={() => void closeSession(item.session_id)}>Encerrar autorização</button>
                       </div>
