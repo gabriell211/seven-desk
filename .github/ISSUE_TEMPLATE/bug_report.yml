@@ -1,0 +1,66 @@
+name: "Relatar defeito"
+description: "Informe um problema reproduzível, sem divulgar dados de sessão ou informações sensíveis."
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: "Para vulnerabilidades de segurança, consulte SECURITY.md e utilize comunicação privada."
+  - type: dropdown
+    id: area
+    attributes:
+      label: "Área afetada"
+      options:
+        - "Conexão e sinalização"
+        - "Captura / vídeo"
+        - "Teclado / mouse"
+        - "Permissões / autenticação"
+        - "Arquivos / clipboard"
+        - "Interface / acessibilidade"
+        - "Instalação / atualização"
+        - "Outro"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: "Versão ou commit"
+      placeholder: "Ex.: commit SHA; ainda sem release"
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: "Ambiente e rede"
+      description: "Sistemas operacionais do operador e host; LAN/WAN, sem IPs públicos."
+      placeholder: "Operador: ... / Host: ... / Rede: ..."
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Como reproduzir"
+      description: "Passos objetivos e consistentes."
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: "Resultado esperado e resultado observado"
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: "Evidências sanitizadas"
+      description: "Nunca inclua senhas, tokens, IDs privados, gravações de terceiros ou arquivos confidenciais."
+    validations:
+      required: false
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: "Verificações"
+      options:
+        - label: "Pesquisei issues existentes para evitar duplicatas."
+          required: true
+        - label: "Removi informações sensíveis das evidências."
+          required: true
