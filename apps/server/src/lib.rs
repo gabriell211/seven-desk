@@ -1566,6 +1566,183 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn keyboard_isolated_from_mouse_consent_and_purged_on_host_stop() {
+        let state = Arc::new(AppState::default());
+        let service = router(state.clone());
+        let operator = SigningKey::from_bytes(&[91_u8; 32]);
+        let host = SigningKey::from_bytes(&[92_u8; 32]);
+        let stranger = SigningKey::from_bytes(&[93_u8; 32]);
+        for key in [&operator, &host, &stranger] {
+            assert_eq!(
+                service
+                    .clone()
+                    .oneshot(signed_request(key, "POST", "/v1/devices", b"{}".to_vec()))
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::OK
+            );
+        }
+        // The first session has permission for screen + mouse only.
+        let first = SessionId(Uuid::new_v4());
+        let make = |id: SessionId, requested: BTreeSet<Capability>| SessionRequest {
+            protocol_version: seven_protocol::PROTOCOL_VERSION,
+            session_id: id,
+            operator: device_id(&operator.verifying_key()),
+            host: device_id(&host.verifying_key()),
+            requested,
+            expires_at_ms: now_ms() + 30_000,
+        };
+        for (id, requested, grant) in [
+            (
+                first,
+                BTreeSet::from([Capability::Screen, Capability::Input]),
+                br#"{"approve":true,"granted":["screen","input"]}"#.to_vec(),
+            ),
+            (
+                SessionId(Uuid::new_v4()),
+                BTreeSet::from([Capability::Screen, Capability::Keyboard]),
+                br#"{"approve":true,"granted":["screen","keyboard"]}"#.to_vec(),
+            ),
+        ] {
+            let created = service
+                .clone()
+                .oneshot(signed_request(
+                    &operator,
+                    "POST",
+                    "/v1/sessions",
+                    serde_json::to_vec(&make(id, requested)).unwrap(),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(created.status(), StatusCode::CREATED);
+            let accepted = service
+                .clone()
+                .oneshot(signed_request(
+                    &host,
+                    "POST",
+                    &format!("/v1/sessions/{}/decision", id.0),
+                    grant,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(accepted.status(), StatusCode::OK);
+        }
+
+        let denied_path = format!("/v1/sessions/{}/keyboard", first.0);
+        let text_event = br#"{"type":"text","value":"Olá"}"#.to_vec();
+        let denied = service
+            .clone()
+            .oneshot(signed_request(&operator, "POST", &denied_path, text_event.clone()))
+            .await
+            .unwrap();
+        assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+        let second_id = state
+            .sessions
+            .lock()
+            .unwrap()
+            .keys()
+            .copied()
+            .find(|id| *id != first)
+            .unwrap();
+        let path = format!("/v1/sessions/{}/keyboard", second_id.0);
+
+        for (key, method, body) in [
+            (&host, "POST", text_event.clone()),
+            (&stranger, "GET", vec![]),
+            (&operator, "GET", vec![]),
+        ] {
+            let denied = service
+                .clone()
+                .oneshot(signed_request(key, method, &path, body))
+                .await
+                .unwrap();
+            assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+        }
+        let invalid = service
+            .clone()
+            .oneshot(signed_request(
+                &operator,
+                "POST",
+                &path,
+                br#"{"type":"text","value":"a\\nb"}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+        let accepted = service
+            .clone()
+            .oneshot(signed_request(&operator, "POST", &path, text_event.clone()))
+            .await
+            .unwrap();
+        assert_eq!(accepted.status(), StatusCode::ACCEPTED);
+        assert_eq!(state.keyboard_queues.lock().unwrap()[&second_id].events.len(), 1);
+
+        let fetched = service
+            .clone()
+            .oneshot(signed_request(&host, "GET", &path, vec![]))
+            .await
+            .unwrap();
+        assert_eq!(fetched.status(), StatusCode::OK);
+        let raw = to_bytes(fetched.into_body(), MAX_PAYLOAD_SIZE).await.unwrap();
+        let events: Vec<KeyboardEvent> = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(
+            events,
+            vec![KeyboardEvent::Text {
+                value: "Olá".into()
+            }]
+        );
+        let repeated = service
+            .clone()
+            .oneshot(signed_request(&host, "GET", &path, vec![]))
+            .await
+            .unwrap();
+        let raw = to_bytes(repeated.into_body(), MAX_PAYLOAD_SIZE)
+            .await
+            .unwrap();
+        assert_eq!(raw.as_ref(), b"[]");
+
+        // Queue a second key without sleeping and verify the host stop clears it.
+        state
+            .keyboard_queues
+            .lock()
+            .unwrap()
+            .get_mut(&second_id)
+            .unwrap()
+            .last_accepted_ms = Some(0);
+        let new_key = service
+            .clone()
+            .oneshot(signed_request(
+                &operator,
+                "POST",
+                &path,
+                br#"{"type":"key","key":"backspace"}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(new_key.status(), StatusCode::ACCEPTED);
+        let delivery_path = format!("/v1/sessions/{}/screen-delivery", second_id.0);
+        let paused = service
+            .clone()
+            .oneshot(signed_request(
+                &host,
+                "POST",
+                &delivery_path,
+                br#"{"enabled":false}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(paused.status(), StatusCode::OK);
+        assert!(!state.keyboard_queues.lock().unwrap().contains_key(&second_id));
+        let blocked = service
+            .clone()
+            .oneshot(signed_request(&operator, "POST", &path, text_event))
+            .await
+            .unwrap();
+        assert_eq!(blocked.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
     async fn pointer_relay_requires_explicit_input_grant_and_host_identity() {
         let state = Arc::new(AppState::default());
         let service = router(state.clone());
