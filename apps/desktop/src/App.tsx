@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
   getBackendStatus,
   getLocalStatus,
@@ -18,6 +18,10 @@ import {
   sendRemoteMouse,
   configureHostMouse,
   pollHostMouse,
+  sendRemoteKeyboard,
+  configureHostKeyboard,
+  pollHostKeyboard,
+  type RemoteKeyboardEvent,
   type RemoteMouseEvent,
   type LocalStatus,
   type SessionReceipt,
@@ -44,6 +48,13 @@ export function App() {
   const [backendReady, setBackendReady] = useState(false);
   const [target, setTarget] = useState("");
   const [requestMouse, setRequestMouse] = useState(false);
+  const [requestKeyboard, setRequestKeyboard] = useState(false);
+  const [viewerKeyboardActive, setViewerKeyboardActive] = useState(false);
+  const [hostKeyboardSession, setHostKeyboardSession] = useState<string | null>(null);
+  const [keyboardBusy, setKeyboardBusy] = useState(false);
+  const keyboardWireAt = useRef(0);
+  const keyboardSendChain = useRef<Promise<void>>(Promise.resolve());
+  const viewerKeyboardEnabledRef = useRef(false);
   const [viewerMouseActive, setViewerMouseActive] = useState(false);
   const [hostMouseSession, setHostMouseSession] = useState<string | null>(null);
   const [mouseBusy, setMouseBusy] = useState(false);
@@ -332,6 +343,62 @@ export function App() {
     };
   }, [hostMouseSession, streamingSession, presenceActive, backendReady]);
 
+  // Keyboard is disabled on every launch until the host explicitly accepts,
+  // shares its screen, and locally enables this separate keyboard switch.
+  useEffect(() => {
+    if (!hostKeyboardSession) return;
+    const id = hostKeyboardSession;
+    if (!presenceActive || !backendReady || streamingSession !== id) {
+      setHostKeyboardSession(null);
+      void configureHostKeyboard(id, false);
+      return;
+    }
+    let stopped = false;
+    let busy = false;
+    async function pump(): Promise<void> {
+      if (stopped || busy) return;
+      busy = true;
+      try {
+        await pollHostKeyboard(id);
+      } catch (error: unknown) {
+        if (!stopped) {
+          setHostKeyboardSession(null);
+          void configureHostKeyboard(id, false);
+          setFeedback(error instanceof Error ? error.message : "Teclado remoto interrompido.");
+        }
+      } finally {
+        busy = false;
+      }
+    }
+    const timer = window.setInterval(() => void pump(), 180);
+    const onHidden = () => {
+      if (document.hidden) {
+        setHostKeyboardSession(null);
+        void configureHostKeyboard(id, false);
+      }
+    };
+    document.addEventListener("visibilitychange", onHidden);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onHidden);
+      void configureHostKeyboard(id, false);
+    };
+  }, [hostKeyboardSession, streamingSession, presenceActive, backendReady]);
+
+  useEffect(() => {
+    viewerKeyboardEnabledRef.current = viewerKeyboardActive;
+  }, [viewerKeyboardActive]);
+
+  useEffect(() => {
+    if (!outboundSession || outboundSession.status !== "active" ||
+        !operatorSessions.some((item) =>
+          item.session_id === outboundSession.session_id && item.granted.includes("keyboard")
+        )) {
+      setViewerKeyboardActive(false);
+    }
+  }, [outboundSession?.session_id, outboundSession?.status, operatorSessions]);
+
   useEffect(() => {
     viewerMouseEnabledRef.current = viewerMouseActive;
   }, [viewerMouseActive]);
@@ -349,7 +416,7 @@ export function App() {
     if (!presenceActive || requesting) return;
     setRequesting(true);
     try {
-      const result = await requestSupport(target.trim(), requestMouse);
+      const result = await requestSupport(target.trim(), requestMouse, requestKeyboard);
       setOutboundSession(result);
       setFeedback("Solicitação de negociação enviada. Aguarde a autorização no host.");
     } catch (error: unknown) {
@@ -359,11 +426,16 @@ export function App() {
     }
   }
 
-  async function respondToInvitation(sessionId: string, approve: boolean, grantMouse = false): Promise<void> {
+  async function respondToInvitation(
+    sessionId: string,
+    approve: boolean,
+    grantMouse = false,
+    grantKeyboard = false,
+  ): Promise<void> {
     if (decisionBusy) return;
     setDecisionBusy(sessionId);
     try {
-      await decideInvitation(sessionId, approve, grantMouse);
+      await decideInvitation(sessionId, approve, grantMouse, grantKeyboard);
       setInbox((previous) => previous.filter((item) => item.session_id !== sessionId));
       // The signed authorization listing refreshes automatically after approval.
       setFeedback(approve
@@ -391,6 +463,10 @@ export function App() {
         setHostMouseSession(null);
         void configureHostMouse(sessionId, false);
       }
+      if (hostKeyboardSession === sessionId) {
+        setHostKeyboardSession(null);
+        void configureHostKeyboard(sessionId, false);
+      }
       setActiveSessions((current) => current.filter((item) => item.session_id !== sessionId));
       setOperatorSessions((current) => current.filter((item) => item.session_id !== sessionId));
       setFeedback("Negociação encerrada e permissões revogadas.");
@@ -405,6 +481,10 @@ export function App() {
     // Stop local capture immediately, even if the server is offline. The
     // backend independently deletes cached pixels when the signed stop arrives.
     setStreamingSession(null);
+    if (hostKeyboardSession === sessionId) {
+      setHostKeyboardSession(null);
+      void configureHostKeyboard(sessionId, false);
+    }
     try {
       await setScreenDelivery(sessionId, false);
       setFeedback("Compartilhamento parado e último quadro apagado do servidor.");
@@ -452,6 +532,77 @@ export function App() {
     } finally {
       setMouseBusy(false);
     }
+  }
+
+  async function toggleHostKeyboard(sessionId: string): Promise<void> {
+    if (keyboardBusy) return;
+    setKeyboardBusy(true);
+    try {
+      if (hostKeyboardSession === sessionId) {
+        setHostKeyboardSession(null);
+        await configureHostKeyboard(sessionId, false);
+        setFeedback("Teclado remoto desativado neste computador.");
+      } else {
+        if (streamingSession !== sessionId) {
+          throw new Error("Inicie o compartilhamento da tela antes do teclado remoto.");
+        }
+        await configureHostKeyboard(sessionId, true);
+        setHostKeyboardSession(sessionId);
+        setFeedback("Teclado remoto ativo. Use o botão Parar teclado para bloquear.");
+      }
+    } catch (error: unknown) {
+      setFeedback(error instanceof Error ? error.message : "Falha no controle do teclado.");
+    } finally {
+      setKeyboardBusy(false);
+    }
+  }
+
+  async function submitViewerKeyboard(event: RemoteKeyboardEvent): Promise<void> {
+    if (!viewerKeyboardEnabledRef.current || !outboundSession ||
+        outboundSession.status !== "active") return;
+    const sessionId = outboundSession.session_id;
+    const send = keyboardSendChain.current.then(async () => {
+      const remaining = Math.max(0, 65 - (Date.now() - keyboardWireAt.current));
+      if (remaining > 0) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, remaining));
+      }
+      if (!viewerKeyboardEnabledRef.current) return;
+      await sendRemoteKeyboard(sessionId, event);
+      keyboardWireAt.current = Date.now();
+    });
+    keyboardSendChain.current = send.catch(() => {});
+    try {
+      await send;
+    } catch (error: unknown) {
+      setViewerKeyboardActive(false);
+      setFeedback(error instanceof Error ? error.message : "Teclado remoto interrompido.");
+    }
+  }
+
+  function onViewerKeyDown(event: ReactKeyboardEvent<HTMLImageElement>): void {
+    if (!viewerKeyboardActive || event.repeat ||
+        event.ctrlKey || event.altKey || event.metaKey || event.isComposing) return;
+    const allowed: Record<string, RemoteKeyboardEvent> = {
+      Enter: { type: "key", key: "enter" },
+      Backspace: { type: "key", key: "backspace" },
+      Tab: { type: "key", key: "tab" },
+      Escape: { type: "key", key: "escape" },
+      Delete: { type: "key", key: "delete" },
+      ArrowUp: { type: "key", key: "arrow_up" },
+      ArrowDown: { type: "key", key: "arrow_down" },
+      ArrowLeft: { type: "key", key: "arrow_left" },
+      ArrowRight: { type: "key", key: "arrow_right" },
+      Home: { type: "key", key: "home" },
+      End: { type: "key", key: "end" },
+      PageUp: { type: "key", key: "page_up" },
+      PageDown: { type: "key", key: "page_down" },
+    };
+    const translated = allowed[event.key] ??
+      ([...event.key].length === 1 && ![...event.key].some((c) => /[\u0000-\u001f\u007f]/u.test(c))
+        ? { type: "text" as const, value: event.key } : null);
+    if (!translated) return;
+    event.preventDefault();
+    void submitViewerKeyboard(translated);
   }
 
   async function submitViewerMouse(event: RemoteMouseEvent, motion: boolean): Promise<void> {
