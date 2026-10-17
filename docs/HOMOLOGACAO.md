@@ -2,6 +2,10 @@
 
 > Documento normativo para iniciar implementação. **Nenhum gate está atualmente aprovado.** Aprovação exige evidência real, não checklists preenchidos sem executar teste.
 
+## Gate executável — controle de sessão (pré-alfa)
+
+A validação HTTP de identidades independentes, assinatura, consentimento, permissões, envio de quadro sintético, pausa e revogação está especificada em [QA_SESSION_GATE.md](QA_SESSION_GATE.md). O runner `npm run smoke:session` executa contra o servidor Rust real e publica JSON na CI para Windows e Linux. **Esse teste não substitui instalação e uso em dois computadores nem autoriza declarar 1.0 homologado.** O estado do gate depende dos resultados do commit correspondente.
+
 ## Classes de testes
 
 | Tipo | O que validar | Quando |
