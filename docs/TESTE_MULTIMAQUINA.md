@@ -46,8 +46,10 @@ npm run tauri:dev
 2. No operador, digitar o ID do host e **Solicitar autorização**. O host deve aparecer na própria fila de convites.
 3. No host, clicar em **Autorizar negociação**. Sem aceitar, **nenhum quadro deve ser entregue**.
 4. Em **Autorizações ativas**, no host Windows, clicar em **Compartilhar um quadro**. No operador, clicar em **Ver último quadro autorizado** para receber a imagem estática.
-5. No host, **Encerrar autorização**. A próxima leitura no operador deve ser negada, mesmo que o quadro estivesse presente anteriormente.
-6. Repetir teste recusando convite, expirando convite, desligando servidor, expirando presença e tentando usar ID inválido.
+5. Para baixa frequência, o host pode clicar em **Iniciar quadros (~1 FPS)**, com indicador persistente de compartilhamento. O operador pode clicar em **Atualizar automaticamente (~1 FPS)**. Confirmar que os frames mudam enquanto há atividade visível no host e que apenas uma captura roda por vez.
+6. O host clica em **Parar quadros** ou minimiza/oculta a janela. Verificar que novos quadros deixam de chegar; após 15 segundos, os últimos quadros no servidor expiram. O operador deve deixar de visualizar conteúdo antigo como se fosse atual.
+7. No host, **Encerrar autorização de tela**. A próxima leitura no operador deve ser negada, mesmo que um quadro estivesse presente antes.
+8. Repetir teste recusando convite, expirando convite, desligando servidor, expirando presença e tentando usar ID inválido.
 
 ## Evidências de homologação
 

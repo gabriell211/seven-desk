@@ -49,6 +49,8 @@ export function App() {
   const [ending, setEnding] = useState(false);
   const [frameBusy, setFrameBusy] = useState(false);
   const [lastFrame, setLastFrame] = useState<string | null>(null);
+  const [streamingSession, setStreamingSession] = useState<string | null>(null);
+  const [viewingSession, setViewingSession] = useState<string | null>(null);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -180,6 +182,91 @@ export function App() {
     return () => { stopped = true; window.clearInterval(timer); };
   }, [outboundSession?.session_id, outboundSession?.status]);
 
+  // Explicit host-initiated low-rate frame publishing. No background service
+  // or automatic capture exists: closing the app stops the timer.
+  useEffect(() => {
+    if (!streamingSession || !presenceActive || !backendReady) return;
+    const id = streamingSession;
+    let cancelled = false;
+    let busyFrame = false;
+    async function capture(): Promise<void> {
+      if (cancelled || busyFrame) return;
+      busyFrame = true;
+      try {
+        await publishManualFrame(id);
+      } catch (error: unknown) {
+        if (!cancelled) {
+          setStreamingSession(null);
+          setFeedback(error instanceof Error ? error.message : "Compartilhamento interrompido.");
+        }
+      } finally {
+        busyFrame = false;
+      }
+    }
+    void capture();
+    const timer = window.setInterval(() => void capture(), 1_000);
+    const stopIfHidden = () => { if (document.hidden) setStreamingSession(null); };
+    document.addEventListener("visibilitychange", stopIfHidden);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", stopIfHidden);
+    };
+  }, [streamingSession, presenceActive, backendReady]);
+
+  // The operator opts in separately. An expired/missing frame clears the image,
+  // while revocation and network errors stop the viewer completely.
+  useEffect(() => {
+    if (!viewingSession || outboundSession?.session_id !== viewingSession || outboundSession.status !== "active") return;
+    const id = viewingSession;
+    let cancelled = false;
+    let busyFrame = false;
+    async function refreshFrame(): Promise<void> {
+      if (cancelled || busyFrame) return;
+      busyFrame = true;
+      try {
+        const next = await getAuthorizedFrame(id);
+        if (!cancelled) setLastFrame(next);
+      } catch (error: unknown) {
+        if (!cancelled) {
+          setLastFrame(null);
+          const message = error instanceof Error ? error.message : "Falha ao consultar a tela.";
+          // No frame has been published recently: remain ready for a new frame.
+          if (!message.includes("HTTP 404")) {
+            setViewingSession(null);
+            setFeedback(message);
+          }
+        }
+      } finally {
+        busyFrame = false;
+      }
+    }
+    void refreshFrame();
+    const timer = window.setInterval(() => void refreshFrame(), 1_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [viewingSession, outboundSession?.session_id, outboundSession?.status]);
+
+  useEffect(() => {
+    if (!presenceActive || !backendReady) {
+      setStreamingSession(null);
+      setViewingSession(null);
+      setLastFrame(null);
+    }
+  }, [presenceActive, backendReady]);
+
+  useEffect(() => {
+    if (outboundSession?.status !== "active") {
+      setViewingSession(null);
+      setLastFrame(null);
+    }
+  }, [outboundSession?.status]);
+
+  useEffect(() => {
+    if (streamingSession && !activeSessions.some((session) => session.session_id === streamingSession)) {
+      setStreamingSession(null);
+    }
+  }, [activeSessions, streamingSession]);
+
   async function sendInvitation(): Promise<void> {
     if (!presenceActive || requesting) return;
     setRequesting(true);
@@ -218,8 +305,10 @@ export function App() {
       const result = await terminateSession(sessionId);
       if (outboundSession?.session_id === sessionId) {
         setOutboundSession(result);
+        setViewingSession(null);
         setLastFrame(null);
       }
+      if (streamingSession === sessionId) setStreamingSession(null);
       setActiveSessions((current) => current.filter((item) => item.session_id !== sessionId));
       setFeedback("Negociação encerrada e permissões revogadas.");
     } catch (error: unknown) {
@@ -303,6 +392,15 @@ export function App() {
           <div className="breadcrumb">Seven Desk <span>/</span> {navigation.find((item) => item.id === page)?.label}</div>
           <span className="version">{status ? `v${status.app_version}` : "Pré-alfa"}</span>
         </header>
+        {streamingSession && (
+          <div className="panel" role="status" style={{ margin: 18, padding: 15, borderColor: "var(--accent)" }}>
+            <strong>● Compartilhamento ativo — até 1 quadro por segundo</strong>
+            <p>A tela principal está sendo capturada enquanto esta janela permanecer aberta. Sem controle remoto ou áudio.</p>
+            <button className="secondary" type="button" onClick={() => setStreamingSession(null)}>Parar compartilhamento agora</button>
+            <button className="secondary" type="button" disabled={ending}
+              onClick={() => { if (streamingSession) void closeSession(streamingSession); }}>Encerrar autorização de tela</button>
+          </div>
+        )}
 
         {page === "inicio" && (
           <div className="content">
@@ -361,19 +459,28 @@ export function App() {
                   onClick={() => void sendInvitation()}>
                   <span aria-hidden="true">↗</span> {requesting ? "Solicitando..." : "Solicitar autorização"}
                 </button>
-                <div className="foot-note">Somente negociação de sessão. Vídeo, áudio e controle remoto ainda não estão disponíveis.</div>
+                <div className="foot-note">Quadros estáticos autorizados podem ser atualizados até uma vez por segundo. Sem áudio, mouse ou teclado remoto.</div>
                 {outboundSession && (
                   <div className="foot-note" role="status">
                     <strong>Estado:</strong> {
                       outboundSession.status === "awaiting_consent" ? "Aguardando aprovação" :
-                      outboundSession.status === "active" ? "Aprovado (quadro manual disponível)" :
+                      outboundSession.status === "active" ? "Aprovado (visualização consentida disponível)" :
                       outboundSession.status === "rejected" ? "Recusado pelo host" : "Encerrado"
                     }
                     {outboundSession.status === "active" && (
-                      <button className="secondary" type="button" disabled={frameBusy}
-                        onClick={() => void viewManualFrame(outboundSession.session_id)}>
-                        {frameBusy ? "Carregando quadro..." : "Ver último quadro autorizado"}
-                      </button>
+                      <>
+                        <button className="secondary" type="button" disabled={frameBusy || viewingSession !== null}
+                          onClick={() => void viewManualFrame(outboundSession.session_id)}>
+                          {frameBusy ? "Carregando quadro..." : "Ver último quadro autorizado"}
+                        </button>
+                        <button className="secondary" type="button"
+                          onClick={() => {
+                            setViewingSession((current) => current === outboundSession.session_id ? null : outboundSession.session_id);
+                            setLastFrame(null);
+                          }}>
+                          {viewingSession === outboundSession.session_id ? "Parar atualização" : "Atualizar automaticamente (~1 FPS)"}
+                        </button>
+                      </>
                     )}
                     {(outboundSession.status === "awaiting_consent" || outboundSession.status === "active") && (
                       <button className="secondary" type="button" disabled={ending}
@@ -383,7 +490,7 @@ export function App() {
                 )}
                 {lastFrame && outboundSession?.status === "active" && (
                   <div className="foot-note">
-                    <p>Captura estática autorizada. Sem atualização automática, áudio ou controle remoto.</p>
+                    <p>{viewingSession ? "Atualização autorizada de até 1 quadro por segundo." : "Quadro estático autorizado."} Sem áudio nem controle remoto.</p>
                     <img src={lastFrame} alt="Último quadro da tela remota compartilhado manualmente pelo host"
                       style={{ width: "100%", maxHeight: 480, objectFit: "contain", borderRadius: 8 }} />
                   </div>
@@ -421,13 +528,18 @@ export function App() {
                     <div className="setting-row" key={item.session_id}>
                       <div>
                         <strong>Operador: {item.operator}</strong>
-                        <p>Capacidades: {item.granted.join(", ")}. Quadro estático compartilhado somente após clicar.</p>
+                        <p>Capacidades: {item.granted.join(", ")}. Compartilhamento opcional e sempre interrompível.</p>
                       </div>
                       <div className="input-group">
                         <button className="secondary" type="button"
-                          disabled={frameBusy || status?.operating_system !== "windows"}
+                          disabled={frameBusy || streamingSession !== null || status?.operating_system !== "windows"}
                           onClick={() => void shareManualFrame(item.session_id)}>
                           {frameBusy ? "Capturando..." : "Compartilhar um quadro"}
+                        </button>
+                        <button className="secondary" type="button"
+                          disabled={status?.operating_system !== "windows"}
+                          onClick={() => setStreamingSession((current) => current === item.session_id ? null : item.session_id)}>
+                          {streamingSession === item.session_id ? "Parar quadros" : "Iniciar quadros (~1 FPS)"}
                         </button>
                         <button className="secondary" type="button" disabled={ending}
                           onClick={() => void closeSession(item.session_id)}>Encerrar autorização</button>
