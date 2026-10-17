@@ -205,7 +205,13 @@ export function App() {
     }
     void capture();
     const timer = window.setInterval(() => void capture(), 1_000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    const stopIfHidden = () => { if (document.hidden) setStreamingSession(null); };
+    document.addEventListener("visibilitychange", stopIfHidden);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", stopIfHidden);
+    };
   }, [streamingSession, presenceActive, backendReady]);
 
   // The operator opts in separately. An expired/missing frame clears the image,
@@ -247,6 +253,13 @@ export function App() {
       setLastFrame(null);
     }
   }, [presenceActive, backendReady]);
+
+  useEffect(() => {
+    if (outboundSession?.status !== "active") {
+      setViewingSession(null);
+      setLastFrame(null);
+    }
+  }, [outboundSession?.status]);
 
   useEffect(() => {
     if (streamingSession && !activeSessions.some((session) => session.session_id === streamingSession)) {
@@ -384,6 +397,8 @@ export function App() {
             <strong>● Compartilhamento ativo — até 1 quadro por segundo</strong>
             <p>A tela principal está sendo capturada enquanto esta janela permanecer aberta. Sem controle remoto ou áudio.</p>
             <button className="secondary" type="button" onClick={() => setStreamingSession(null)}>Parar compartilhamento agora</button>
+            <button className="secondary" type="button" disabled={ending}
+              onClick={() => void closeSession(streamingSession)}>Encerrar autorização de tela</button>
           </div>
         )}
 
