@@ -47,6 +47,8 @@ jobs:
         run: npm install --no-package-lock --include=optional --no-audit --no-fund
       - name: Verify frontend types and build
         run: npm run desktop:build
+      - name: Smoke real Vite production preview on loopback
+        run: npm run smoke:desktop
       - name: Generate deterministic native icons
         run: node scripts/generate-icons.mjs
       - name: Verify icons were generated
@@ -95,6 +97,8 @@ jobs:
         run: |
           npm run desktop:build
           node scripts/generate-icons.mjs
+      - name: Smoke desktop React preview on Windows
+        run: npm run smoke:desktop
       - name: Verify Windows capture implementation compiles
         run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
       - name: Smoke native backend on clean Windows runner
