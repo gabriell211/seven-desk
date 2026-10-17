@@ -221,6 +221,26 @@ pub async fn end_session(session_id: String) -> Result<SessionReceipt, String> {
     serde_json::from_slice(&raw).map_err(|_| "Resposta inválida para encerramento".to_string())
 }
 
+/// Host-only on/off switch for the frame channel; changing to false clears
+/// server-side pixels and rejects any late upload from an older capture.
+#[tauri::command]
+pub async fn set_screen_delivery(session_id: String, enabled: bool) -> Result<(), String> {
+    let id = parse_session_id(&session_id)?;
+    let path = format!("/v1/sessions/{id}/screen-delivery");
+    let payload = if enabled {
+        br#"{"enabled":true}"#.to_vec()
+    } else {
+        br#"{"enabled":false}"#.to_vec()
+    };
+    let raw = signed_request(Method::POST, path, payload).await?;
+    let response: serde_json::Value = serde_json::from_slice(&raw)
+        .map_err(|_| "Resposta inválida ao configurar compartilhamento".to_string())?;
+    if response.get("enabled").and_then(serde_json::Value::as_bool) != Some(enabled) {
+        return Err("O servidor não confirmou o estado de compartilhamento".to_string());
+    }
+    Ok(())
+}
+
 /// Manually capture a single host frame from the primary monitor (Windows).
 /// Capture cannot run until the host has actively approved the specific session.
 #[cfg(target_os = "windows")]
