@@ -402,7 +402,8 @@ async fn configure_screen_delivery(
     let path = format!("/v1/sessions/{id}/screen-delivery");
     let host = authenticated(&state, &headers, "POST", &path, &body)?;
     known(&state, host)?;
-    let input: ScreenDeliveryRequest = serde_json::from_slice(&body).map_err(|_| ApiError::Invalid)?;
+    let input: ScreenDeliveryRequest =
+        serde_json::from_slice(&body).map_err(|_| ApiError::Invalid)?;
     let session_id = SessionId(id);
     let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
     let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
@@ -416,7 +417,9 @@ async fn configure_screen_delivery(
             .map_err(|_| ApiError::Unavailable)?
             .remove(&session_id);
     }
-    Ok(Json(ScreenDeliveryResponse { enabled: input.enabled }))
+    Ok(Json(ScreenDeliveryResponse {
+        enabled: input.enabled,
+    }))
 }
 
 /// Explicitly consented host uploads a single PNG frame. This is a local
@@ -692,7 +695,10 @@ pub fn router(state: Arc<AppState>) -> Router {
                 .layer(DefaultBodyLimit::max(MAX_FRAME_BYTES)),
         )
         .route("/v1/sessions/{id}", get(get_session).delete(terminate))
-        .route("/v1/sessions/{id}/screen-delivery", post(configure_screen_delivery))
+        .route(
+            "/v1/sessions/{id}/screen-delivery",
+            post(configure_screen_delivery),
+        )
         .route("/v1/sessions/{id}/decision", post(decide))
         .route("/v1/sessions/{id}/revoke", post(revoke))
         .with_state(state)
