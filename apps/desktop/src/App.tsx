@@ -8,6 +8,7 @@ import {
   requestSupport,
   pendingInvitations,
   activeAuthorizations,
+  activeOperatorSessions,
   decideInvitation,
   readSessionState,
   terminateSession,
@@ -17,6 +18,7 @@ import {
   type SessionReceipt,
   type PendingInvitation,
   type ActiveAuthorization,
+  type ActiveOperatorSession,
 } from "./bridge";
 
 type Page = "inicio" | "dispositivos" | "configuracoes";
@@ -44,6 +46,7 @@ export function App() {
   const [requesting, setRequesting] = useState(false);
   const [outboundSession, setOutboundSession] = useState<SessionReceipt | null>(null);
   const [activeSessions, setActiveSessions] = useState<ActiveAuthorization[]>([]);
+  const [operatorSessions, setOperatorSessions] = useState<ActiveOperatorSession[]>([]);
   const [inbox, setInbox] = useState<PendingInvitation[]>([]);
   const [decisionBusy, setDecisionBusy] = useState<string | null>(null);
   const [ending, setEnding] = useState(false);
@@ -132,6 +135,7 @@ export function App() {
     if (!presenceActive || !backendReady) {
       setInbox([]);
       setActiveSessions([]);
+      setOperatorSessions([]);
       return;
     }
     let stopped = false;
@@ -140,18 +144,21 @@ export function App() {
       if (fetching) return;
       fetching = true;
       try {
-        const [received, authorizations] = await Promise.all([
+        const [received, authorizations, operatorGrants] = await Promise.all([
           pendingInvitations(),
           activeAuthorizations(),
+          activeOperatorSessions(),
         ]);
         if (!stopped) {
           setInbox(received);
           setActiveSessions(authorizations);
+          setOperatorSessions(operatorGrants);
         }
       } catch {
         if (!stopped) {
           setInbox([]);
           setActiveSessions([]);
+          setOperatorSessions([]);
         }
       } finally {
         fetching = false;
@@ -310,6 +317,7 @@ export function App() {
       }
       if (streamingSession === sessionId) setStreamingSession(null);
       setActiveSessions((current) => current.filter((item) => item.session_id !== sessionId));
+      setOperatorSessions((current) => current.filter((item) => item.session_id !== sessionId));
       setFeedback("Negociação encerrada e permissões revogadas.");
     } catch (error: unknown) {
       setFeedback(error instanceof Error ? error.message : "Não foi possível encerrar a sessão.");
@@ -486,6 +494,31 @@ export function App() {
                       <button className="secondary" type="button" disabled={ending}
                         onClick={() => void closeSession(outboundSession.session_id)}>Cancelar / encerrar</button>
                     )}
+                  </div>
+                )}
+                {operatorSessions.length > 0 && (
+                  <div className="foot-note">
+                    <strong>Sessões autorizadas do operador</strong>
+                    <p>Estas autorizações podem ser recuperadas após reabrir o programa, enquanto ainda estiverem ativas no servidor.</p>
+                    {operatorSessions.map((item) => (
+                      <div className="setting-row" key={item.session_id}>
+                        <div>
+                          <strong>Host: {item.host}</strong>
+                          <p>Permissões: {item.granted.join(", ")}</p>
+                        </div>
+                        <div className="input-group">
+                          <button className="secondary" type="button"
+                            disabled={outboundSession?.session_id === item.session_id && outboundSession.status === "active"}
+                            onClick={() => {
+                              setViewingSession(null);
+                              setLastFrame(null);
+                              setOutboundSession({ session_id: item.session_id, status: "active" });
+                            }}>Retomar visualização</button>
+                          <button className="secondary" type="button" disabled={ending}
+                            onClick={() => void closeSession(item.session_id)}>Encerrar</button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
                 {lastFrame && outboundSession?.status === "active" && (

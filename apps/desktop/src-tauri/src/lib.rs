@@ -130,6 +130,7 @@ pub fn run() {
             session_api::create_session_request,
             session_api::list_pending_invitations,
             session_api::list_active_authorizations,
+            session_api::list_active_operator_sessions,
             session_api::decide_session,
             session_api::session_status,
             session_api::publish_manual_screen_frame,
