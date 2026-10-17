@@ -37,18 +37,10 @@ export async function getLocalStatus(): Promise<LocalStatus | null> {
   return invoke<LocalStatus>("local_status");
 }
 
-export async function getBackendStatus(signal?: AbortSignal): Promise<BackendStatus | null> {
-  // Developer control plane only; never expose an unauthenticated remote endpoint.
-  const response = await fetch("http://127.0.0.1:43821/healthz", {
-    method: "GET",
-    signal,
-  });
-  if (!response.ok) throw new Error("Control plane indisponível");
-  const payload: unknown = await response.json();
-  if (!payload || typeof payload !== "object") return null;
-  if (!("status" in payload) || payload.status !== "ok") return null;
-  if (!("production_ready" in payload) || typeof payload.production_ready !== "boolean") return null;
-  return payload as BackendStatus;
+export async function getBackendStatus(_signal?: AbortSignal): Promise<BackendStatus | null> {
+  if (!isTauri()) return null;
+  // Use native Rust HTTPS certificate validation. No browser-side CORS bypass.
+  return invoke<BackendStatus>("backend_status");
 }
 
 export interface SessionReceipt {
