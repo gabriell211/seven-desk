@@ -276,6 +276,17 @@ pub async fn list_session_chat(session_id: String) -> Result<Vec<ChatMessage>, S
 }
 
 #[tauri::command]
+pub async fn revoke_session_chat(session_id: String) -> Result<(), String> {
+    let id = parse_session_id(&session_id)?;
+    let body = serde_json::to_vec(&serde_json::json!({"capability": "chat"}))
+        .map_err(|_| "Falha ao codificar revogação".to_string())?;
+    let raw = signed_request(Method::POST, format!("/v1/sessions/{id}/revoke"), body).await?;
+    let _: SessionReceipt = serde_json::from_slice(&raw)
+        .map_err(|_| "Resposta inválida para revogação".to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn session_status(session_id: String) -> Result<String, String> {
     let id = parse_session_id(&session_id)?;
     let path = format!("/v1/sessions/{id}");
