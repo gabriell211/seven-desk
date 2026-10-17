@@ -65,6 +65,13 @@ Três entregas adicionais foram integradas à `main` após passar pelos cinco jo
 
 A documentação experimental dos endpoints está em [API_DESENVOLVIMENTO.md](API_DESENVOLVIMENTO.md). O backend continua **local, em memória e não preparado para produção**. Não houve homologação visual ou E2E em duas máquinas; os builds e testes de CI não devem ser apresentados como validação de conexão remota funcional.
 
+## Integração funcional da negociação — 17/10/2026
+
+- [PR #81](https://github.com/gabriell211/seven-desk/pull/81) — **merged, CI 5/5**: comandos nativos Tauri de criação de convite, leitura da fila, aceite/recusa do host, consulta de estado e encerramento; interface React usa essas operações assinadas de verdade, com solicitação limitada à capacidade `screen`.
+- [PR #82](https://github.com/gabriell211/seven-desk/pull/82) — **merged, CI 5/5**: host consegue listar todas as autorizações ativas destinadas à sua identidade, inclusive após reabrir a janela, e encerrá-las. Testes HTTP impedem listagem por operador/terceiros e conferem revogação.
+
+**Restrições que permanecem:** as autorizações atuais são **apenas metadados**, não há fluxo de pixels, relay, captura nativa nem acesso a outro computador via WAN. `127.0.0.1` e estado temporário continuam intencionais. Testes CI não substituem ensaios em dois desktops reais. A infraestrutura segura para conexões remotas e o serviço host são as prioridades de implementação.
+
 ## O que ainda bloqueia uso real
 
 1. Implementar serviço host real e permanente, rotação/revogação de identidades e operação multi-dispositivo. A UI já consegue registrar sua presença no servidor local por requisição assinada, mas **isso não habilita controle remoto**.
