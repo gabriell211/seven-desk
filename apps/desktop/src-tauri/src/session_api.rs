@@ -31,6 +31,14 @@ pub struct SessionReceipt {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct ChatMessage {
+    sequence: u64,
+    sender: Uuid,
+    text: String,
+    sent_at_ms: u64,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct PendingInvitation {
     session_id: Uuid,
     operator: Uuid,
@@ -67,6 +75,7 @@ fn invitation(
     now: u64,
     request_mouse: bool,
     request_keyboard: bool,
+    request_chat: bool,
 ) -> Result<SessionRequest, String> {
     if operator == host {
         return Err("Não é permitido solicitar suporte para o próprio dispositivo".into());
@@ -77,6 +86,9 @@ fn invitation(
     }
     if request_keyboard {
         requested.insert(Capability::Keyboard);
+    }
+    if request_chat {
+        requested.insert(Capability::Chat);
     }
     Ok(SessionRequest {
         protocol_version: PROTOCOL_VERSION,
@@ -184,11 +196,12 @@ pub async fn create_session_request(
     target_id: String,
     request_mouse: bool,
     request_keyboard: bool,
+    request_chat: bool,
 ) -> Result<SessionReceipt, String> {
     let target = Uuid::parse_str(target_id.trim())
         .map_err(|_| "Digite o ID completo e válido do dispositivo remoto".to_string())?;
     let request = invitation(
-        read_device_id().await?, target, timestamp_ms()?, request_mouse, request_keyboard,
+        read_device_id().await?, target, timestamp_ms()?, request_mouse, request_keyboard, request_chat,
     )?;
     let data = serde_json::to_vec(&request).map_err(|_| "Falha ao criar convite".to_string())?;
     let raw = signed_request(Method::POST, "/v1/sessions".to_owned(), data).await?;
@@ -226,6 +239,7 @@ pub async fn decide_session(
     approve: bool,
     grant_mouse: bool,
     grant_keyboard: bool,
+    grant_chat: bool,
 ) -> Result<SessionReceipt, String> {
     let id = parse_session_id(&session_id)?;
     let mut granted = BTreeSet::new();
@@ -233,12 +247,32 @@ pub async fn decide_session(
         granted.insert(Capability::Screen);
         if grant_mouse { granted.insert(Capability::Input); }
         if grant_keyboard { granted.insert(Capability::Keyboard); }
+        if grant_chat { granted.insert(Capability::Chat); }
     }
     let body = serde_json::to_vec(&serde_json::json!({"approve": approve, "granted": granted}))
         .map_err(|_| "Falha ao codificar a autorização".to_string())?;
     let path = format!("/v1/sessions/{id}/decision");
     let raw = signed_request(Method::POST, path, body).await?;
     serde_json::from_slice(&raw).map_err(|_| "Resposta inválida para decisão".to_string())
+}
+
+#[tauri::command]
+pub async fn send_session_chat(session_id: String, text: String) -> Result<ChatMessage, String> {
+    if text.trim().is_empty() || text.len() > 2_048 || text.chars().count() > 500 {
+        return Err("Mensagem inválida ou muito longa".to_string());
+    }
+    let id = parse_session_id(&session_id)?;
+    let body = serde_json::to_vec(&serde_json::json!({"text": text}))
+        .map_err(|_| "Falha ao codificar mensagem".to_string())?;
+    let raw = signed_request(Method::POST, format!("/v1/sessions/{id}/chat"), body).await?;
+    serde_json::from_slice(&raw).map_err(|_| "Resposta inválida do chat".to_string())
+}
+
+#[tauri::command]
+pub async fn list_session_chat(session_id: String) -> Result<Vec<ChatMessage>, String> {
+    let id = parse_session_id(&session_id)?;
+    let raw = signed_request(Method::GET, format!("/v1/sessions/{id}/chat"), vec![]).await?;
+    serde_json::from_slice(&raw).map_err(|_| "Resposta inválida do histórico de chat".to_string())
 }
 
 #[tauri::command]
