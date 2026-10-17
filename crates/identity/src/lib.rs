@@ -48,7 +48,9 @@ impl SecretStore for SystemKeyStore {
     fn write(&self, secret: &[u8; 32]) -> Result<(), IdentityError> {
         let entry = keyring::Entry::new(KEY_SERVICE, KEY_USER)
             .map_err(|_| IdentityError::StoreUnavailable)?;
-        entry.set_secret(secret).map_err(|_| IdentityError::StoreUnavailable)
+        entry
+            .set_secret(secret)
+            .map_err(|_| IdentityError::StoreUnavailable)
     }
 }
 
@@ -58,9 +60,11 @@ pub struct Identity {
 
 impl Identity {
     pub fn load(store: &impl SecretStore) -> Result<Option<Self>, IdentityError> {
-        store.read().map(|seed| seed.map(|bytes| Self {
-            key: SigningKey::from_bytes(&bytes),
-        }))
+        store.read().map(|seed| {
+            seed.map(|bytes| Self {
+                key: SigningKey::from_bytes(&bytes),
+            })
+        })
     }
 
     pub fn load_or_create(store: &impl SecretStore) -> Result<Self, IdentityError> {
@@ -114,7 +118,10 @@ mod tests {
 
     impl SecretStore for MemoryStore {
         fn read(&self) -> Result<Option<[u8; 32]>, IdentityError> {
-            self.0.lock().map(|v| *v).map_err(|_| IdentityError::StoreUnavailable)
+            self.0
+                .lock()
+                .map(|v| *v)
+                .map_err(|_| IdentityError::StoreUnavailable)
         }
         fn write(&self, value: &[u8; 32]) -> Result<(), IdentityError> {
             *self.0.lock().map_err(|_| IdentityError::StoreUnavailable)? = Some(*value);
@@ -136,8 +143,18 @@ mod tests {
     fn signed_proof_interoperates_with_security_verifier() {
         let store = MemoryStore::default();
         let identity = Identity::load_or_create(&store).unwrap();
-        let proof = identity.sign("POST", "/v1/devices", b"{}", Uuid::new_v4(), 10_000).unwrap();
-        let (id, _) = verify(&proof, "POST", "/v1/devices", b"{}", 10_000, &NonceWindow::default()).unwrap();
+        let proof = identity
+            .sign("POST", "/v1/devices", b"{}", Uuid::new_v4(), 10_000)
+            .unwrap();
+        let (id, _) = verify(
+            &proof,
+            "POST",
+            "/v1/devices",
+            b"{}",
+            10_000,
+            &NonceWindow::default(),
+        )
+        .unwrap();
         assert_eq!(id, identity.id());
     }
 
@@ -145,9 +162,16 @@ mod tests {
     fn does_not_silently_reset_invalid_key_material() {
         struct Corrupt;
         impl SecretStore for Corrupt {
-            fn read(&self) -> Result<Option<[u8; 32]>, IdentityError> { Err(IdentityError::CorruptKey) }
-            fn write(&self, _: &[u8; 32]) -> Result<(), IdentityError> { Ok(()) }
+            fn read(&self) -> Result<Option<[u8; 32]>, IdentityError> {
+                Err(IdentityError::CorruptKey)
+            }
+            fn write(&self, _: &[u8; 32]) -> Result<(), IdentityError> {
+                Ok(())
+            }
         }
-        assert!(matches!(Identity::load_or_create(&Corrupt), Err(IdentityError::CorruptKey)));
+        assert!(matches!(
+            Identity::load_or_create(&Corrupt),
+            Err(IdentityError::CorruptKey)
+        ));
     }
 }
