@@ -28,6 +28,9 @@ import {
   type PendingInvitation,
   type ActiveAuthorization,
   type ActiveOperatorSession,
+  sendSessionChat,
+  listSessionChat,
+  type ChatMessage,
 } from "./bridge";
 
 type Page = "inicio" | "dispositivos" | "configuracoes";
@@ -39,6 +42,75 @@ const navigation: Array<{ id: Page; label: string; icon: string }> = [
   { id: "configuracoes", label: "Configurações", icon: "⚙" },
 ];
 
+
+// Chat is independent from screen capture and input. The server enforces
+// explicit Chat capability at each read and write, including after revocation.
+function SessionChat({ sessionId, ownDeviceId }: { sessionId: string; ownDeviceId: string }) {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [draft, setDraft] = useState("");
+  const [problem, setProblem] = useState("");
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let inFlight = false;
+    setMessages([]);
+    async function refresh() {
+      if (inFlight || cancelled) return;
+      inFlight = true;
+      try {
+        const next = await listSessionChat(sessionId);
+        if (!cancelled) { setMessages(next); setProblem(""); }
+      } catch {
+        if (!cancelled) {
+          setMessages([]);
+          setProblem("Chat indisponível. Verifique a autorização e a conexão.");
+        }
+      } finally { inFlight = false; }
+    }
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 2_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [sessionId]);
+
+  async function submit() {
+    const text = draft.trim();
+    if (!text || sending) return;
+    setSending(true);
+    try {
+      const sent = await sendSessionChat(sessionId, text);
+      setDraft("");
+      setMessages((current) => current.some((m) => m.sequence === sent.sequence)
+        ? current : [...current, sent].slice(-24));
+      setProblem("");
+    } catch (error: unknown) {
+      setProblem(error instanceof Error ? error.message : "Não foi possível enviar a mensagem.");
+    } finally { setSending(false); }
+  }
+
+  return (
+    <div className="foot-note" aria-label="Chat autorizado da sessão">
+      <strong>Chat da sessão (temporário)</strong>
+      <p>Disponível somente com permissão concedida pelo host. Mensagens ficam na memória temporária do servidor de desenvolvimento.</p>
+      <div role="log" aria-label="Mensagens da sessão" style={{ maxHeight: 168, overflowY: "auto", padding: 8, border: "1px solid var(--border, #777)", borderRadius: 8 }}>
+        {messages.length === 0 ? <span>Nenhuma mensagem.</span> : messages.map((msg) => (
+          <p key={msg.sequence} style={{ margin: "4px 0", overflowWrap: "anywhere" }}>
+            <strong>{msg.sender === ownDeviceId ? "Você" : "Outro participante"}:</strong> {msg.text}
+          </p>
+        ))}
+      </div>
+      <form onSubmit={(event) => { event.preventDefault(); void submit(); }} className="input-group">
+        <input aria-label="Mensagem para a sessão" placeholder="Escreva uma mensagem (até 500 caracteres)"
+          maxLength={500} value={draft} onChange={(event) => setDraft(event.target.value)} />
+        <button type="submit" className="secondary" disabled={sending || !draft.trim()}>
+          {sending ? "Enviando..." : "Enviar"}
+        </button>
+      </form>
+      {problem && <p role="alert">{problem}</p>}
+    </div>
+  );
+}
+
 export function App() {
   const [page, setPage] = useState<Page>("inicio");
   const [theme, setTheme] = useState<Theme>(() =>
@@ -49,6 +121,8 @@ export function App() {
   const [target, setTarget] = useState("");
   const [requestMouse, setRequestMouse] = useState(false);
   const [requestKeyboard, setRequestKeyboard] = useState(false);
+  const [requestChat, setRequestChat] = useState(false);
+  const [chatApprovals, setChatApprovals] = useState<Record<string, boolean>>({});
   const [viewerMouseActive, setViewerMouseActive] = useState(false);
   const [viewerKeyboardActive, setViewerKeyboardActive] = useState(false);
   const [hostMouseSession, setHostMouseSession] = useState<string | null>(null);
@@ -424,7 +498,7 @@ export function App() {
     if (!presenceActive || requesting) return;
     setRequesting(true);
     try {
-      const result = await requestSupport(target.trim(), requestMouse, requestKeyboard);
+      const result = await requestSupport(target.trim(), requestMouse, requestKeyboard, requestChat);
       setOutboundSession(result);
       setFeedback("Solicitação de negociação enviada. Aguarde a autorização no host.");
     } catch (error: unknown) {
@@ -434,11 +508,11 @@ export function App() {
     }
   }
 
-  async function respondToInvitation(sessionId: string, approve: boolean, grantMouse = false, grantKeyboard = false): Promise<void> {
+  async function respondToInvitation(sessionId: string, approve: boolean, grantMouse = false, grantKeyboard = false, grantChat = false): Promise<void> {
     if (decisionBusy) return;
     setDecisionBusy(sessionId);
     try {
-      await decideInvitation(sessionId, approve, grantMouse, grantKeyboard);
+      await decideInvitation(sessionId, approve, grantMouse, grantKeyboard, grantChat);
       setInbox((previous) => previous.filter((item) => item.session_id !== sessionId));
       // The signed authorization listing refreshes automatically after approval.
       setFeedback(approve
@@ -827,7 +901,13 @@ export function App() {
                     aria-label="Solicitar controle de teclado além da visualização" />
                   Solicitar também controle de teclado (depende de aceite separado do host)
                 </label>
-                <button className="primary connect" type="button" disabled={!mayConnect}
+                <label className="foot-note" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input type="checkbox" checked={requestChat}
+                    onChange={(event) => setRequestChat(event.target.checked)}
+                    aria-label="Solicitar chat de texto durante a sessão" />
+                  Solicitar chat de texto (autorização independente do host)
+                </label>
+                <button className="primary connect" type="button" disabled={!mayConnect
                   onClick={() => void sendInvitation()}>
                   <span aria-hidden="true">↗</span> {requesting ? "Solicitando..." : "Solicitar autorização"}
                 </button>
@@ -862,6 +942,9 @@ export function App() {
                     )}
                   </div>
                 )}
+                {outboundSession?.status === "active" &&
+                  operatorSessions.some((item) => item.session_id === outboundSession.session_id && item.granted.includes("chat")) &&
+                  <SessionChat sessionId={outboundSession.session_id} ownDeviceId={status?.device_id ?? ""} />}
                 {operatorSessions.length > 0 && (
                   <div className="foot-note">
                     <strong>Sessões autorizadas do operador</strong>
@@ -939,26 +1022,37 @@ export function App() {
                         <strong>Operador: {invitation.operator}</strong>
                         <p>Permissões solicitadas: {invitation.requested.join(", ")}. O aceite não inicia transmissão de tela.</p>
                       </div>
+                      {invitation.requested.includes("chat") && (
+                        <label className="foot-note" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                          <input type="checkbox"
+                            checked={chatApprovals[invitation.session_id] ?? false}
+                            onChange={(event) => setChatApprovals((current) => ({
+                              ...current, [invitation.session_id]: event.target.checked,
+                            }))}
+                          />
+                          Autorizar também chat de texto (opcional)
+                        </label>
+                      )}
                       <div className="input-group">
                         <button className="secondary" type="button" disabled={decisionBusy !== null}
                           onClick={() => void respondToInvitation(invitation.session_id, false)}>Recusar</button>
                         <button className="primary" type="button" disabled={decisionBusy !== null}
-                          onClick={() => void respondToInvitation(invitation.session_id, true)}>Autorizar só tela</button>
+                          onClick={() => void respondToInvitation(invitation.session_id, true, false, false, chatApprovals[invitation.session_id] ?? false)}>Autorizar tela</button>
                         {invitation.requested.includes("input") && status?.operating_system === "windows" && (
                           <button className="primary" type="button" disabled={decisionBusy !== null}
-                            onClick={() => void respondToInvitation(invitation.session_id, true, true)}>
+                            onClick={() => void respondToInvitation(invitation.session_id, true, true, false, chatApprovals[invitation.session_id] ?? false)}>
                             Autorizar tela + mouse
                           </button>
                         )}
                         {invitation.requested.includes("keyboard") && status?.operating_system === "windows" && (
                           <button className="primary" type="button" disabled={decisionBusy !== null}
-                            onClick={() => void respondToInvitation(invitation.session_id, true, false, true)}>
+                            onClick={() => void respondToInvitation(invitation.session_id, true, false, true, chatApprovals[invitation.session_id] ?? false)}>
                             Autorizar tela + teclado
                           </button>
                         )}
                         {invitation.requested.includes("input") && invitation.requested.includes("keyboard") && status?.operating_system === "windows" && (
                           <button className="primary" type="button" disabled={decisionBusy !== null}
-                            onClick={() => void respondToInvitation(invitation.session_id, true, true, true)}>
+                            onClick={() => void respondToInvitation(invitation.session_id, true, true, true, chatApprovals[invitation.session_id] ?? false)}>
                             Autorizar tela + mouse + teclado
                           </button>
                         )}
@@ -1005,6 +1099,8 @@ export function App() {
                         <button className="secondary" type="button" disabled={ending}
                           onClick={() => void closeSession(item.session_id)}>Encerrar autorização</button>
                       </div>
+                      {item.granted.includes("chat") &&
+                        <SessionChat sessionId={item.session_id} ownDeviceId={status?.device_id ?? ""} />}
                     </div>
                   ))
                 }
