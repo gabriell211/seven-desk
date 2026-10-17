@@ -38,6 +38,14 @@ pub struct ActiveAuthorization {
     expires_at_ms: u64,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct ActiveOperatorSession {
+    session_id: Uuid,
+    host: Uuid,
+    granted: BTreeSet<Capability>,
+    expires_at_ms: u64,
+}
+
 fn timestamp_ms() -> Result<u64, String> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -172,6 +180,18 @@ pub async fn list_pending_invitations() -> Result<Vec<PendingInvitation>, String
 pub async fn list_active_authorizations() -> Result<Vec<ActiveAuthorization>, String> {
     let raw = signed_request(Method::GET, "/v1/sessions/host/active".to_owned(), vec![]).await?;
     serde_json::from_slice(&raw).map_err(|_| "Resposta inválida para autorizações ativas".to_string())
+}
+
+#[tauri::command]
+pub async fn list_active_operator_sessions() -> Result<Vec<ActiveOperatorSession>, String> {
+    let raw = signed_request(
+        Method::GET,
+        "/v1/sessions/operator/active".to_owned(),
+        vec![],
+    )
+    .await?;
+    serde_json::from_slice(&raw)
+        .map_err(|_| "Resposta inválida ao consultar sessões do operador".to_string())
 }
 
 #[tauri::command]
