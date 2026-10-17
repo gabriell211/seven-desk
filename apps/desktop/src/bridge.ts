@@ -69,12 +69,29 @@ export interface ActiveOperatorSession {
   expires_at_ms: number;
 }
 
+export interface ChatMessage {
+  sequence: number;
+  sender: string;
+  text: string;
+  sent_at_ms: number;
+}
+
+export async function sendSessionChat(sessionId: string, text: string): Promise<ChatMessage> {
+  if (!isTauri()) throw new Error("Chat disponível apenas no aplicativo instalado.");
+  return invoke<ChatMessage>("send_session_chat", { sessionId, text });
+}
+
+export async function listSessionChat(sessionId: string): Promise<ChatMessage[]> {
+  if (!isTauri()) return [];
+  return invoke<ChatMessage[]>("list_session_chat", { sessionId });
+}
+
 export type SessionState = "awaiting_consent" | "active" | "rejected" | "ended";
 
 /** Restricted to the native desktop; no private keys or raw signed URLs enter JS. */
-export async function requestSupport(targetId: string, requestMouse = false, requestKeyboard = false): Promise<SessionReceipt> {
+export async function requestSupport(targetId: string, requestMouse = false, requestKeyboard = false, requestChat = false): Promise<SessionReceipt> {
   if (!isTauri()) throw new Error("Disponível somente no aplicativo Seven Desk.");
-  return invoke<SessionReceipt>("create_session_request", { targetId, requestMouse, requestKeyboard });
+  return invoke<SessionReceipt>("create_session_request", { targetId, requestMouse, requestKeyboard, requestChat });
 }
 
 export async function pendingInvitations(): Promise<PendingInvitation[]> {
@@ -97,9 +114,10 @@ export async function decideInvitation(
   approve: boolean,
   grantMouse = false,
   grantKeyboard = false,
+  grantChat = false,
 ): Promise<SessionReceipt> {
   if (!isTauri()) throw new Error("É necessário usar o aplicativo instalado.");
-  return invoke<SessionReceipt>("decide_session", { sessionId, approve, grantMouse, grantKeyboard });
+  return invoke<SessionReceipt>("decide_session", { sessionId, approve, grantMouse, grantKeyboard, grantChat });
 }
 
 export async function readSessionState(sessionId: string): Promise<SessionState> {
