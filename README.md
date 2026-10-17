@@ -241,12 +241,12 @@ O [roadmap operacional](docs/ROADMAP.md) reúne as **73 issues** por fase e seus
 
 ## Desenvolvimento e contribuição
 
-### Pré-requisitos previstos
+### Pré-requisitos de desenvolvimento atuais
 
-- Rust stable e Cargo (toolchain fixada em arquivo do projeto quando o código existir).
-- Node.js LTS e pnpm com versões fixadas em `package.json`/`packageManager`.
-- Toolchains nativas exigidas por Tauri e pelos módulos de captura de cada sistema.
-- PostgreSQL para serviços centrais; Redis apenas se necessário para o caso de uso.
+- Rust **1.90.0** e Cargo (toolchain fixada em `rust-toolchain.toml`).
+- Node.js **22 LTS** e npm. O monorepo contém também `pnpm-workspace.yaml`, mas os scripts e o CI atuais usam **npm workspaces**.
+- Toolchains nativas do Tauri conforme o sistema operacional; consulte [o guia de implementação](docs/IMPLEMENTACAO.md).
+- O backend experimental usa armazenamento temporário em memória; **PostgreSQL e Redis não são exigidos para executar a pré-alfa local**.
 
 **Comandos de desenvolvimento e compilação do código pré-alfa** estão registrados em [docs/IMPLEMENTACAO.md](docs/IMPLEMENTACAO.md). A execução dos testes do núcleo Rust, o build React e o cargo check Tauri foram validados pelo CI. Os instaladores definitivos e a conexão remota real ainda não foram homologados. O [guia de contribuição](CONTRIBUTING.md) descreve como validar mudanças e reportar evidências.
 
