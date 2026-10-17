@@ -20,7 +20,7 @@ use seven_protocol::{
 };
 use seven_security::{NonceWindow, RequestProof, verify};
 use std::{
-    collections::{BTreeSet, HashMap, VecDeque},
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
     sync::{Arc, Mutex, RwLock},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -37,6 +37,10 @@ const MAX_INPUT_SESSIONS: usize = 8;
 const MAX_INPUT_QUEUE: usize = 32;
 const INPUT_EVENT_TTL_MS: u64 = 2_000;
 const MIN_INPUT_INTERVAL_MS: u64 = 20;
+const MAX_REGISTERED_DEVICES: usize = 256;
+const MAX_STORED_SESSIONS: usize = 512;
+const MAX_PENDING_PER_OPERATOR: usize = 8;
+const MAX_PENDING_PER_HOST: usize = 16;
 
 #[derive(Default)]
 pub struct AppState {
@@ -171,6 +175,9 @@ async fn register(
     let mut devices = state.devices.write().map_err(|_| ApiError::Unavailable)?;
     // Keep only recently authenticated devices in the development registry.
     devices.retain(|_, expires_at| *expires_at > now);
+    if !devices.contains_key(&device) && devices.len() >= MAX_REGISTERED_DEVICES {
+        return Err(ApiError::RateLimited);
+    }
     devices.insert(device, now.saturating_add(PRESENCE_TTL_MS));
     Ok(Json(Registered {
         device_id: device,
@@ -254,6 +261,44 @@ async fn create_session(
     let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
     if sessions.contains_key(&request.session_id) {
         return Err(ApiError::Conflict);
+    }
+    // Expire invitations before counting quotas. Keep quota check and
+    // insert under one lock to prevent concurrent requests bypassing limits.
+    let now = now_ms();
+    for entry in sessions.values_mut() {
+        entry.expire(now);
+    }
+    let mut from_operator = 0;
+    let mut to_host = 0;
+    for entry in sessions.values() {
+        if let SessionState::AwaitingConsent(pending) = entry.state() {
+            if pending.operator == operator {
+                from_operator += 1;
+            }
+            if pending.host == request.host {
+                to_host += 1;
+            }
+        }
+    }
+    if from_operator >= MAX_PENDING_PER_OPERATOR || to_host >= MAX_PENDING_PER_HOST {
+        return Err(ApiError::RateLimited);
+    }
+    // Preserve active grants and unexpired invitations. Reclaim only
+    // terminal receipts under capacity pressure, purging orphan media.
+    if sessions.len() >= MAX_STORED_SESSIONS {
+        sessions.retain(|_, entry| {
+            !matches!(entry.state(), SessionState::Ended | SessionState::Rejected)
+        });
+        let live: HashSet<SessionId> = sessions.keys().copied().collect();
+        state.frames.lock().map_err(|_| ApiError::Unavailable)?
+            .retain(|id, _| live.contains(id));
+        state.input_queues.lock().map_err(|_| ApiError::Unavailable)?
+            .retain(|id, _| live.contains(id));
+        state.keyboard_queues.lock().map_err(|_| ApiError::Unavailable)?
+            .retain(|id, _| live.contains(id));
+    }
+    if sessions.len() >= MAX_STORED_SESSIONS {
+        return Err(ApiError::RateLimited);
     }
     sessions.insert(request.session_id, machine);
     Ok((
@@ -2416,4 +2461,128 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
+    #[tokio::test]
+    async fn invitation_quota_is_per_operator_and_released_on_expiry() {
+        let state = Arc::new(AppState::default());
+        let service = router(state.clone());
+        let operator = SigningKey::from_bytes(&[45_u8; 32]);
+        let host = SigningKey::from_bytes(&[46_u8; 32]);
+        let other = SigningKey::from_bytes(&[47_u8; 32]);
+        for key in [&operator, &host, &other] {
+            let response = service.clone().oneshot(signed_request(
+                key, "POST", "/v1/devices", b"{}".to_vec(),
+            )).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+        let host_id = device_id(&host.verifying_key());
+        let make = |who: DeviceId| SessionRequest {
+            protocol_version: seven_protocol::PROTOCOL_VERSION,
+            session_id: SessionId(Uuid::new_v4()),
+            operator: who,
+            host: host_id,
+            requested: BTreeSet::from([Capability::Screen]),
+            expires_at_ms: now_ms() + 120_000,
+        };
+        let operator_id = device_id(&operator.verifying_key());
+        let mut first = None;
+        for _ in 0..MAX_PENDING_PER_OPERATOR {
+            let request = make(operator_id);
+            if first.is_none() { first = Some(request.session_id); }
+            let response = service.clone().oneshot(signed_request(
+                &operator, "POST", "/v1/sessions", serde_json::to_vec(&request).unwrap(),
+            )).await.unwrap();
+            assert_eq!(response.status(), StatusCode::CREATED);
+        }
+        let blocked = make(operator_id);
+        let response = service.clone().oneshot(signed_request(
+            &operator, "POST", "/v1/sessions", serde_json::to_vec(&blocked).unwrap(),
+        )).await.unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        let independent = make(device_id(&other.verifying_key()));
+        let response = service.clone().oneshot(signed_request(
+            &other, "POST", "/v1/sessions", serde_json::to_vec(&independent).unwrap(),
+        )).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        {
+            let mut sessions = state.sessions.lock().unwrap();
+            assert!(sessions.get_mut(&first.unwrap()).unwrap().expire(now_ms() + 121_000));
+        }
+        let retry = make(operator_id);
+        let response = service.oneshot(signed_request(
+            &operator, "POST", "/v1/sessions", serde_json::to_vec(&retry).unwrap(),
+        )).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn registered_device_quota_rejects_new_key_but_allows_renewal() {
+        let state = Arc::new(AppState::default());
+        let service = router(state.clone());
+        let own = SigningKey::from_bytes(&[48_u8; 32]);
+        {
+            let mut devices = state.devices.write().unwrap();
+            devices.insert(device_id(&own.verifying_key()), now_ms() + PRESENCE_TTL_MS);
+            for _ in 1..MAX_REGISTERED_DEVICES {
+                devices.insert(DeviceId(Uuid::new_v4()), now_ms() + PRESENCE_TTL_MS);
+            }
+        }
+        let renewed = service.clone().oneshot(signed_request(
+            &own, "POST", "/v1/devices", b"{}".to_vec(),
+        )).await.unwrap();
+        assert_eq!(renewed.status(), StatusCode::OK);
+        let new_key = SigningKey::from_bytes(&[49_u8; 32]);
+        let blocked = service.oneshot(signed_request(
+            &new_key, "POST", "/v1/devices", b"{}".to_vec(),
+        )).await.unwrap();
+        assert_eq!(blocked.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn capacity_gc_keeps_authorized_session_and_reclaims_terminal_receipts() {
+        let state = Arc::new(AppState::default());
+        let service = router(state.clone());
+        let actor = SigningKey::from_bytes(&[51_u8; 32]);
+        let host = SigningKey::from_bytes(&[52_u8; 32]);
+        for key in [&actor, &host] {
+            let response = service.clone().oneshot(signed_request(
+                key, "POST", "/v1/devices", b"{}".to_vec(),
+            )).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+        let operator_id = device_id(&actor.verifying_key());
+        let host_id = device_id(&host.verifying_key());
+        let make = || SessionRequest {
+            protocol_version: seven_protocol::PROTOCOL_VERSION,
+            session_id: SessionId(Uuid::new_v4()),
+            operator: operator_id,
+            host: host_id,
+            requested: BTreeSet::from([Capability::Screen]),
+            expires_at_ms: now_ms() + 120_000,
+        };
+        let active = make();
+        {
+            let mut sessions = state.sessions.lock().unwrap();
+            let mut accepted = SessionMachine::default();
+            accepted.request(active.clone(), now_ms()).unwrap();
+            accepted.accept(host_id, active.requested.clone(), now_ms()).unwrap();
+            sessions.insert(active.session_id, accepted);
+            for _ in 1..MAX_STORED_SESSIONS {
+                let ended = make();
+                let mut finished = SessionMachine::default();
+                finished.request(ended.clone(), now_ms()).unwrap();
+                finished.reject(host_id).unwrap();
+                sessions.insert(ended.session_id, finished);
+            }
+        }
+        let next = make();
+        let response = service.oneshot(signed_request(
+            &actor, "POST", "/v1/sessions", serde_json::to_vec(&next).unwrap(),
+        )).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let sessions = state.sessions.lock().unwrap();
+        assert!(sessions.get(&active.session_id).unwrap().permits(Capability::Screen, now_ms()));
+        assert!(sessions.contains_key(&next.session_id));
+        assert_eq!(sessions.len(), 2);
+    }
+
 }
