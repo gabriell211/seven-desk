@@ -72,3 +72,19 @@ button.connect { width: 100%; margin-top: 12px; display: flex; align-items: cent
 .toast button { border: none; background: transparent; color: var(--muted); font-size: 22px; }
 @media (max-width: 900px) { .app-shell { grid-template-columns: 76px minmax(0,1fr); } .sidebar { padding: 24px 12px; } .brand { padding: 0 4px 35px; } .brand > div:last-child, .nav-link { font-size: 0; } .nav-link { justify-content: center; padding: 11px; } .nav-icon { font-size: 20px; } .sidebar-footer div { display: none; } .sidebar-footer { justify-content: center; } .content { padding: 38px 25px; } .topbar { padding: 0 26px; } }
 @media (max-width: 670px) { .app-shell { grid-template-columns: 60px minmax(0,1fr); } .sidebar { padding: 18px 6px; } .brand-mark { width: 34px; height: 34px; } .cards { grid-template-columns: 1fr; } .panel { padding: 21px; } .settings-panel { padding: 0 18px; } .setting-row { align-items: flex-start; flex-direction: column; } .topbar { height: 65px; } .content { padding: 30px 17px; } }
+
+/* Directory: bounded local contact list, readable at tablet and laptop widths. */
+.directory-add { display: grid; grid-template-columns: 1.5fr 1fr 1fr auto; gap: 12px; align-items: end; margin-bottom: 20px; }
+.directory-add > label { min-width: 0; }
+.directory-add .primary { white-space: nowrap; }
+.directory-message { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 13px 0; }
+.directory-list { margin-top: 18px; border-top: 1px solid var(--border); }
+.directory-entry { padding: 17px 0; display: flex; justify-content: space-between; align-items: center; gap: 15px; border-bottom: 1px solid var(--border); }
+.directory-entry > div:first-child { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.directory-entry strong { overflow-wrap: anywhere; }
+.directory-entry small { color: var(--muted); overflow-wrap: anywhere; }
+.directory-presence { color: var(--muted); font-size: 12px; }
+.directory-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; flex-shrink: 0; }
+.directory-actions .secondary { padding: 9px 12px; }
+@media (max-width: 1150px) { .directory-add { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .directory-add { grid-template-columns: 1fr; } .directory-entry { flex-direction: column; align-items: stretch; } .directory-actions { justify-content: flex-start; } }
