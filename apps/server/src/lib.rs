@@ -18,7 +18,7 @@ use seven_protocol::{
     Capability, DeviceId, KeyboardEvent, MouseEvent, SessionId, SessionMachine, SessionRequest,
     SessionState,
 };
-use seven_security::{NonceWindow, RequestProof, verify};
+use seven_security::{AuthError, NonceWindow, RequestProof, verify};
 use std::{
     collections::{BTreeSet, HashMap, HashSet, VecDeque},
     sync::{Arc, Mutex, RwLock},
@@ -123,7 +123,10 @@ fn authenticated(
             .map_err(|_| ApiError::Unauthorized)?,
     };
     let (device, _) = verify(&proof, method, path, body, now_ms(), &state.nonce_window)
-        .map_err(|_| ApiError::Unauthorized)?;
+        .map_err(|error| match error {
+            AuthError::CapacityExceeded => ApiError::RateLimited,
+            _ => ApiError::Unauthorized,
+        })?;
     Ok(device)
 }
 
