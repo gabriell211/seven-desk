@@ -7,7 +7,7 @@
 
 **Plataforma multiplataforma de assistência remota, administração de dispositivos e colaboração em tempo real.**
 
-[Visão geral](#visão-geral) · [Funcionalidades](#funcionalidades) · [Arquitetura](#arquitetura-proposta) · [Segurança](#segurança-e-privacidade) · [Roadmap](#roadmap) · [Contribuição](#desenvolvimento-e-contribuição)
+[Visão geral](#visão-geral) · [Funcionalidades](#funcionalidades) · [Arquitetura](#arquitetura-proposta) · [Segurança](#segurança-e-privacidade) · [Roadmap](docs/ROADMAP.md) · [Contribuição](#desenvolvimento-e-contribuição)
 
 </div>
 
@@ -179,7 +179,7 @@ tests/
 
 **Aviso de transparência:** um indicador de acesso ativo e o mecanismo de encerramento pelo host são requisitos de segurança obrigatórios. Acesso legítimo não equivale a operação oculta.
 
-Para relatar vulnerabilidades, não publique credenciais, exploit funcional ou dados de terceiros em issues públicas. Utilize um canal privado de divulgação responsável a ser definido antes do beta público.
+Para reportar vulnerabilidades, não publique credenciais, detalhes exploráveis nem dados de terceiros em issues públicas. Consulte [SECURITY.md](SECURITY.md) para as orientações de divulgação responsável.
 
 ## Requisitos não funcionais e metas de validação
 
@@ -210,7 +210,7 @@ Planejamento organizado por entrega incremental, sem datas ou versões fictícia
 | **P4 — Enterprise / 1.0** | Organizações/RBAC, SSO, relatórios, atualização assinada, observabilidade e documentação operacional | Release checklist completo, requisitos críticos fechados e rollback testado |
 | **P5 — Expansão** | Viewer móvel, impressão remota, Wake-on-LAN, áudio, gravação consentida e infraestrutura própria | Homologação individual por sistema e funcionalidade |
 
-O roadmap detalhado vive nas [issues do projeto](https://github.com/gabriell211/seven-desk/issues). **Uma versão 1.0 só deve ser publicada após cumprir seus critérios de homologação.**
+O [roadmap operacional](docs/ROADMAP.md) reúne as 48 issues por fase e seus gates de homologação; acompanhe também as [issues do projeto](https://github.com/gabriell211/seven-desk/issues). **Uma versão 1.0 só deve ser publicada após cumprir seus critérios de homologação.**
 
 ## Desenvolvimento e contribuição
 
