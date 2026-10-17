@@ -203,13 +203,7 @@ async fn pending_invitations(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<PendingInvitation>>, ApiError> {
-    let host = authenticated(
-        &state,
-        &headers,
-        "GET",
-        "/v1/sessions/inbox",
-        &[],
-    )?;
+    let host = authenticated(&state, &headers, "GET", "/v1/sessions/inbox", &[])?;
     known(&state, host)?;
 
     let now = now_ms();
@@ -589,7 +583,9 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::OK);
-            let body = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE).await.unwrap();
+            let body = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE)
+                .await
+                .unwrap();
             assert_eq!(body.as_ref(), b"[]");
         }
 
@@ -604,7 +600,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE).await.unwrap();
+        let body = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE)
+            .await
+            .unwrap();
         let pending: serde_json::Value = serde_json::from_slice(&body).unwrap();
         let entries = pending.as_array().unwrap();
         assert_eq!(entries.len(), 1);
@@ -636,7 +634,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE).await.unwrap();
+        let body = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE)
+            .await
+            .unwrap();
         assert_eq!(body.as_ref(), b"[]");
     }
 
@@ -661,7 +661,12 @@ mod tests {
 
         let response = service
             .clone()
-            .oneshot(signed_request(&host, "GET", "/v1/sessions/inbox", Vec::new()))
+            .oneshot(signed_request(
+                &host,
+                "GET",
+                "/v1/sessions/inbox",
+                Vec::new(),
+            ))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
@@ -684,7 +689,11 @@ mod tests {
         };
         let mut machine = SessionMachine::default();
         machine.request(expired.clone(), 0).unwrap();
-        state.sessions.lock().unwrap().insert(expired.session_id, machine);
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .insert(expired.session_id, machine);
 
         let response = service
             .clone()
@@ -697,10 +706,18 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE).await.unwrap();
+        let body = to_bytes(response.into_body(), MAX_PAYLOAD_SIZE)
+            .await
+            .unwrap();
         assert_eq!(body.as_ref(), b"[]");
         assert!(matches!(
-            state.sessions.lock().unwrap().get(&expired.session_id).unwrap().state(),
+            state
+                .sessions
+                .lock()
+                .unwrap()
+                .get(&expired.session_id)
+                .unwrap()
+                .state(),
             SessionState::Ended
         ));
     }
