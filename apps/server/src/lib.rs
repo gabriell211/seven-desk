@@ -1665,7 +1665,7 @@ mod tests {
                 &operator,
                 "POST",
                 &path,
-                br#"{"type":"text","value":"a\\nb"}"#.to_vec(),
+                br#"{"type":"text","value":"a\nb"}"#.to_vec(),
             ))
             .await
             .unwrap();
