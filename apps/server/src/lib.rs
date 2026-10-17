@@ -15,7 +15,8 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use seven_protocol::{
-    Capability, DeviceId, MouseEvent, SessionId, SessionMachine, SessionRequest, SessionState,
+    Capability, DeviceId, KeyboardEvent, MouseEvent, SessionId, SessionMachine, SessionRequest,
+    SessionState,
 };
 use seven_security::{NonceWindow, RequestProof, verify};
 use std::{
@@ -36,6 +37,8 @@ const MAX_INPUT_SESSIONS: usize = 8;
 const MAX_INPUT_QUEUE: usize = 32;
 const INPUT_EVENT_TTL_MS: u64 = 2_000;
 const MIN_INPUT_INTERVAL_MS: u64 = 20;
+const MAX_KEYBOARD_QUEUE: usize = 16;
+const MIN_KEYBOARD_INTERVAL_MS: u64 = 40;
 
 #[derive(Default)]
 pub struct AppState {
@@ -46,6 +49,7 @@ pub struct AppState {
     // Transient pointer events; only the authenticated host consumes these.
     // Never persist user input or allow unattended input injection.
     input_queues: Mutex<HashMap<SessionId, InputQueue>>,
+    keyboard_queues: Mutex<HashMap<SessionId, KeyboardQueue>>,
     nonce_window: NonceWindow,
 }
 
@@ -504,6 +508,12 @@ async fn read_frame(
 
 /// Events live in memory briefly and are never recorded to disk.
 #[derive(Default)]
+struct KeyboardQueue {
+    events: VecDeque<(u64, KeyboardEvent)>,
+    last_accepted_ms: Option<u64>,
+}
+
+#[derive(Default)]
 struct InputQueue {
     events: VecDeque<(u64, MouseEvent)>,
     last_accepted_ms: Option<u64>,
@@ -524,6 +534,97 @@ fn authorized_input_peer(
         return Err(ApiError::Forbidden);
     }
     Ok(())
+}
+
+/// Host and operator have distinct roles; keyboard is NOT inferred from Input.
+fn authorized_keyboard_peer(
+    machine: &mut SessionMachine,
+    actor: DeviceId,
+    send: bool,
+    now: u64,
+) -> Result<(), ApiError> {
+    machine.expire(now);
+    let (host, operator) = machine.participants().ok_or(ApiError::Forbidden)?;
+    if (send && actor != operator) || (!send && actor != host) {
+        return Err(ApiError::Forbidden);
+    }
+    if !machine.permits(Capability::Keyboard, now) || !machine.permits_screen_delivery(now) {
+        return Err(ApiError::Forbidden);
+    }
+    Ok(())
+}
+
+async fn enqueue_keyboard(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<StatusCode, ApiError> {
+    let path = format!("/v1/sessions/{id}/keyboard");
+    let operator = authenticated(&state, &headers, "POST", &path, &body)?;
+    known(&state, operator)?;
+    let event: KeyboardEvent = serde_json::from_slice(&body).map_err(|_| ApiError::Invalid)?;
+    event.validate().map_err(|_| ApiError::Invalid)?;
+    let now = now_ms();
+    let session_id = SessionId(id);
+    let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
+    let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
+    authorized_keyboard_peer(machine, operator, true, now)?;
+    let mut queues = state
+        .keyboard_queues
+        .lock()
+        .map_err(|_| ApiError::Unavailable)?;
+    queues.retain(|_, queue| {
+        queue
+            .events
+            .retain(|(at, _)| now.saturating_sub(*at) <= INPUT_EVENT_TTL_MS);
+        !queue.events.is_empty()
+            || queue
+                .last_accepted_ms
+                .is_some_and(|at| now.saturating_sub(at) <= INPUT_EVENT_TTL_MS)
+    });
+    if !queues.contains_key(&session_id) && queues.len() >= MAX_INPUT_SESSIONS {
+        return Err(ApiError::RateLimited);
+    }
+    let queue = queues.entry(session_id).or_default();
+    if queue
+        .last_accepted_ms
+        .is_some_and(|last| now.saturating_sub(last) < MIN_KEYBOARD_INTERVAL_MS)
+        || queue.events.len() >= MAX_KEYBOARD_QUEUE
+    {
+        return Err(ApiError::RateLimited);
+    }
+    queue.events.push_back((now, event));
+    queue.last_accepted_ms = Some(now);
+    Ok(StatusCode::ACCEPTED)
+}
+
+async fn dequeue_keyboard(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<KeyboardEvent>>, ApiError> {
+    let path = format!("/v1/sessions/{id}/keyboard");
+    let host = authenticated(&state, &headers, "GET", &path, &[])?;
+    known(&state, host)?;
+    let now = now_ms();
+    let session_id = SessionId(id);
+    let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
+    let machine = sessions.get_mut(&session_id).ok_or(ApiError::NotFound)?;
+    authorized_keyboard_peer(machine, host, false, now)?;
+    let mut queues = state
+        .keyboard_queues
+        .lock()
+        .map_err(|_| ApiError::Unavailable)?;
+    let mut batch = Vec::new();
+    if let Some(queue) = queues.get_mut(&session_id) {
+        while let Some((at, event)) = queue.events.pop_front() {
+            if now.saturating_sub(at) <= INPUT_EVENT_TTL_MS {
+                batch.push(event);
+            }
+        }
+    }
+    Ok(Json(batch))
 }
 
 /// Signed operator-to-host pointer relay. This endpoint never injects OS
@@ -835,6 +936,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/v1/sessions/{id}/input",
             get(dequeue_input).post(enqueue_input),
+        )
+        .route(
+            "/v1/sessions/{id}/keyboard",
+            get(dequeue_keyboard).post(enqueue_keyboard),
         )
         .route("/v1/sessions/{id}/decision", post(decide))
         .route("/v1/sessions/{id}/revoke", post(revoke))
