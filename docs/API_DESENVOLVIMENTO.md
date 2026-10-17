@@ -27,6 +27,7 @@ A mensagem canônica assinada é formada pelas linhas `seven-desk/request/v1`, m
 | `GET` | `/v1/devices/{id}/presence` | Consultar se dispositivo está online; requer identidade registrada e ativa |
 | `POST` | `/v1/sessions` | Solicitar sessão somente com operador e host ativos, assinatura e escopo tipado |
 | `GET` | `/v1/sessions/inbox` | Consultar convites pendentes somente do host autenticado |
+| `GET` | `/v1/sessions/host/active` | Listar somente autorizações ativas do host autenticado para revogar após reabrir o aplicativo |
 | `GET` | `/v1/sessions/{id}` | Consultar estado quando autenticado e participante |
 | `POST` | `/v1/sessions/{id}/decision` | Host aprovar ou rejeitar capacidades solicitadas |
 | `POST` | `/v1/sessions/{id}/revoke` | Host revogar uma capacidade ativa |
@@ -52,7 +53,7 @@ Depois de ativar a identidade e registrar a presença no servidor de desenvolvim
 
 1. Inserir o ID UUID de outro dispositivo registrado **no mesmo servidor local** e solicitar autorização para **visualização futura**. O pedido é assinado no Rust nativo e expira em 120 segundos.
 2. O host autenticado consulta automaticamente a própria fila de convites a cada quatro segundos e pode **recusar** ou **autorizar a negociação**. Não existe aceite automático.
-3. O solicitante consulta o estado a cada três segundos; pode cancelar. O host pode encerrar a autorização. Ambas as ações são assinadas e auditáveis no código do protocolo.
+3. O solicitante consulta o estado a cada três segundos; pode cancelar. O host pode ver as autorizações ativas com uma consulta autenticada, inclusive após reabrir o aplicativo (enquanto o servidor mantiver as sessões), e encerrar qualquer uma delas. Ambas as ações são assinadas e verificadas no backend.
 4. A interface indica explicitamente que uma negociação autorizada **não significa que os pixels estejam sendo transmitidos**. Nenhuma API de captura, injeção de teclado/mouse, porta WAN ou acesso não assistido é ativada.
 
 **Limite importante:** esta etapa só negocia metadados de sessão. O servidor bindado em `127.0.0.1` não conecta dois computadores diferentes via Internet. Para usar o recurso em duas máquinas reais faltam control plane seguro acessível de ambas, transporte autenticado e serviço do host. Não exponha o servidor experimental na rede para contornar essa limitação.

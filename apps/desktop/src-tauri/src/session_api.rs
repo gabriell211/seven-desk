@@ -28,6 +28,14 @@ pub struct PendingInvitation {
     expires_at_ms: u64,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct ActiveAuthorization {
+    session_id: Uuid,
+    operator: Uuid,
+    granted: BTreeSet<Capability>,
+    expires_at_ms: u64,
+}
+
 fn timestamp_ms() -> Result<u64, String> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -143,6 +151,12 @@ pub async fn list_pending_invitations() -> Result<Vec<PendingInvitation>, String
 
 /// Approval always grants screen negotiation only; it never enables input.
 /// The session is metadata-only until separately authorized media is built.
+#[tauri::command]
+pub async fn list_active_authorizations() -> Result<Vec<ActiveAuthorization>, String> {
+    let raw = signed_request(Method::GET, "/v1/sessions/host/active".to_owned(), vec![]).await?;
+    serde_json::from_slice(&raw).map_err(|_| "Resposta inválida para autorizações ativas".to_string())
+}
+
 #[tauri::command]
 pub async fn decide_session(session_id: String, approve: bool) -> Result<SessionReceipt, String> {
     let id = parse_session_id(&session_id)?;

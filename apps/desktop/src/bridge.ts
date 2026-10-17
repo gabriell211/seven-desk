@@ -63,6 +63,13 @@ export interface PendingInvitation {
   expires_at_ms: number;
 }
 
+export interface ActiveAuthorization {
+  session_id: string;
+  operator: string;
+  granted: string[];
+  expires_at_ms: number;
+}
+
 export type SessionState = "awaiting_consent" | "active" | "rejected" | "ended";
 
 /** Restricted to the native desktop; no private keys or raw signed URLs enter JS. */
@@ -74,6 +81,11 @@ export async function requestSupport(targetId: string): Promise<SessionReceipt> 
 export async function pendingInvitations(): Promise<PendingInvitation[]> {
   if (!isTauri()) return [];
   return invoke<PendingInvitation[]>("list_pending_invitations");
+}
+
+export async function activeAuthorizations(): Promise<ActiveAuthorization[]> {
+  if (!isTauri()) return [];
+  return invoke<ActiveAuthorization[]>("list_active_authorizations");
 }
 
 export async function decideInvitation(sessionId: string, approve: boolean): Promise<SessionReceipt> {
