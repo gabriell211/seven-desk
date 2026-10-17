@@ -26,6 +26,7 @@ pub struct SessionId(pub Uuid);
 pub enum Capability {
     Screen,
     Input,
+    Keyboard,
     ClipboardRead,
     ClipboardWrite,
     FileRead,
@@ -71,6 +72,47 @@ impl MouseEvent {
             && (steps == 0 || !(-5..=5).contains(&steps))
         {
             return Err(ProtocolError::InvalidInputEvent);
+        }
+        Ok(())
+    }
+}
+
+/// Keyboard scope is independent from pointer scope: an old mouse-only
+/// consent must never gain the ability to type after a client upgrade.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyboardKey {
+    Enter,
+    Backspace,
+    Tab,
+    Escape,
+    Delete,
+    ArrowUp,
+    ArrowDown,
+    ArrowLeft,
+    ArrowRight,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum KeyboardEvent {
+    Text { value: String },
+    Key { key: KeyboardKey },
+}
+
+impl KeyboardEvent {
+    pub fn validate(&self) -> Result<(), ProtocolError> {
+        if let Self::Text { value } = self {
+            // Short printable text only: no line breaks, control characters,
+            // scripts, shortcuts, modifier key states, or large pastes.
+            let count = value.chars().count();
+            if count == 0 || count > 8 || value.chars().any(char::is_control) {
+                return Err(ProtocolError::InvalidInputEvent);
+            }
         }
         Ok(())
     }
@@ -431,6 +473,42 @@ mod tests {
         let wire = serde_json::to_vec(&good).unwrap();
         assert_eq!(serde_json::from_slice::<MouseEvent>(&wire).unwrap(), good);
         assert!(serde_json::from_slice::<MouseEvent>(br#"{"type":"key","key":"super"}"#).is_err());
+    }
+
+    #[test]
+    fn keyboard_scope_is_independent_and_rejects_control_text() {
+        assert_eq!(
+            serde_json::to_string(&Capability::Keyboard).unwrap(),
+            "\"keyboard\""
+        );
+        assert!(KeyboardEvent::Text {
+            value: "Olá".into(),
+        }
+        .validate()
+        .is_ok());
+        assert_eq!(
+            KeyboardEvent::Text {
+                value: "a\\nb".replace("\\n", "\n"),
+            }
+            .validate(),
+            Err(ProtocolError::InvalidInputEvent)
+        );
+        assert_eq!(
+            KeyboardEvent::Text {
+                value: "123456789".into(),
+            }
+            .validate(),
+            Err(ProtocolError::InvalidInputEvent)
+        );
+        let key = KeyboardEvent::Key {
+            key: KeyboardKey::ArrowLeft,
+        };
+        let bytes = serde_json::to_vec(&key).unwrap();
+        assert_eq!(serde_json::from_slice::<KeyboardEvent>(&bytes).unwrap(), key);
+        assert!(serde_json::from_slice::<KeyboardEvent>(
+            br#"{"type":"key","key":"win"}"#
+        )
+        .is_err());
     }
 
     #[test]
