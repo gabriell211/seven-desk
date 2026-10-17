@@ -97,7 +97,7 @@ A distribuição oficial do aplicativo desktop deverá ser feita pelo **Instalad
 | --- | --- | --- |
 | Windows | `SevenDesk-Setup-<versão>.exe` (instalador com assistente) | Instalar e registrar Seven Desk, criar atalhos e desinstalador; solicitar elevação apenas quando necessária |
 | Linux | Pacotes nativos `.deb` e `.rpm` conforme distribuição homologada | Instalar pelo gerenciador de pacotes, registrar aplicativo e permitir remoção limpa |
-| macOS | Instalador `.pkg` assinado e notarizado quando aplicável | Instalar o aplicativo com permissões documentadas e seguir autorizações nativas do sistema |
+| macOS | Pacote oficial `.dmg` (padrão Tauri), com `.pkg` adicional se necessário | Instalar o aplicativo assinado/notarizado e seguir autorizações nativas do sistema |
 
 **Fluxo de instalação previsto:** executar o pacote oficial → verificar origem e assinatura → conhecer versão e termos aplicáveis → escolher opções permitidas → instalar os componentes → criar os atalhos → abrir o Seven Desk e configurar permissões do host. Atalhos, inicialização com o sistema, instalação de serviço e acesso não assistido devem respeitar as escolhas e políticas autorizadas.
 
@@ -109,6 +109,8 @@ A distribuição oficial do aplicativo desktop deverá ser feita pelo **Instalad
 - Atualização de versões anteriores sem perder configurações válidas ou duplicar serviços; desinstalação limpa.
 - Instalação interativa por padrão; instalações administradas em organizações exigem políticas e documentação específicas.
 - Não incorporar credenciais, ID de outra máquina, acesso persistente ativo por padrão ou consentimento presumido.
+
+**Referências de engenharia:** [pesquisa de repositórios públicos e estratégia dos instaladores](docs/REFERENCIAS_TECNICAS.md).
 
 **Situação atual:** instaladores ainda **não foram implementados**. O requisito está rastreado nas issues [#15](https://github.com/gabriell211/seven-desk/issues/15), [#23](https://github.com/gabriell211/seven-desk/issues/23) e [#38](https://github.com/gabriell211/seven-desk/issues/38). Uma distribuição portátil não faz parte do fluxo de instalação oficial e, se for considerada no futuro, exigirá escopo e aprovação separados.
 
