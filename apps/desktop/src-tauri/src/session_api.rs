@@ -1,5 +1,6 @@
 //! Signed session negotiation for the loopback-only development control plane.
 //! No video, input, file transfer or unattended access is implemented here.
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use seven_identity::{Identity, SystemKeyStore};
@@ -13,6 +14,7 @@ use uuid::Uuid;
 const API_BASE: &str = "http://127.0.0.1:43821";
 const INVITATION_TTL_MS: u64 = 120_000;
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
+const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Serialize, Deserialize)]
 pub struct SessionReceipt {
@@ -84,18 +86,28 @@ async fn signed_request(method: Method, path: String, body: Vec<u8>) -> Result<V
     .await
     .map_err(|_| "Falha ao acessar credenciais nativas".to_string())??;
 
+    let upload_frame = method == Method::POST && path.ends_with("/frame");
+    let max_response = if method == Method::GET && path.ends_with("/frame") {
+        MAX_FRAME_BYTES
+    } else {
+        MAX_RESPONSE_BYTES
+    };
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .no_proxy()
         .build()
         .map_err(|_| "Falha ao abrir conexão local".to_string())?;
-    let response = client
+    let mut response = client
         .request(method, format!("{API_BASE}{path}"))
         .header("x-seven-key", proof.public_key_hex)
         .header("x-seven-signature", proof.signature_hex)
         .header("x-seven-nonce", proof.nonce.to_string())
         .header("x-seven-timestamp", proof.timestamp_ms.to_string())
-        .header("content-type", "application/json")
+        .header("content-type", if upload_frame {
+            "image/png"
+        } else {
+            "application/json"
+        })
         .body(body)
         .send()
         .await
@@ -106,17 +118,21 @@ async fn signed_request(method: Method, path: String, body: Vec<u8>) -> Result<V
         return Err(format!("Solicitação recusada pelo servidor (HTTP {})", code.as_u16()));
     }
 
-    if response.content_length().is_some_and(|len| len > MAX_RESPONSE_BYTES as u64) {
+    if response.content_length().is_some_and(|len| len > max_response as u64) {
         return Err("Resposta do servidor excede o limite permitido".to_string());
     }
-    let raw = response
-        .bytes()
+    let mut raw = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|_| "Erro ao ler resposta do servidor".to_string())?;
-    if raw.len() > MAX_RESPONSE_BYTES {
-        return Err("Resposta do servidor excede o limite permitido".to_string());
+        .map_err(|_| "Erro ao ler resposta do servidor".to_string())?
+    {
+        if chunk.len() > max_response.saturating_sub(raw.len()) {
+            return Err("Resposta do servidor excede o limite permitido".to_string());
+        }
+        raw.extend_from_slice(&chunk);
     }
-    Ok(raw.to_vec())
+    Ok(raw)
 }
 
 async fn read_device_id() -> Result<Uuid, String> {
@@ -184,6 +200,80 @@ pub async fn end_session(session_id: String) -> Result<SessionReceipt, String> {
     let path = format!("/v1/sessions/{id}");
     let raw = signed_request(Method::DELETE, path, vec![]).await?;
     serde_json::from_slice(&raw).map_err(|_| "Resposta inválida para encerramento".to_string())
+}
+
+/// Manually capture a single host frame from the primary monitor (Windows).
+/// Capture cannot run until the host has actively approved the specific session.
+#[cfg(target_os = "windows")]
+fn capture_png() -> Result<Vec<u8>, String> {
+    use image::{DynamicImage, ImageFormat, imageops::FilterType};
+    use std::io::Cursor;
+
+    let monitors = xcap::Monitor::all()
+        .map_err(|_| "Não foi possível listar os monitores deste dispositivo".to_string())?;
+    let selected = monitors
+        .iter()
+        .position(|monitor| monitor.is_primary().unwrap_or(false))
+        .unwrap_or(0);
+    let monitor = monitors
+        .get(selected)
+        .ok_or_else(|| "Nenhum monitor disponível para captura".to_string())?;
+    let screenshot = monitor
+        .capture_image()
+        .map_err(|_| "O Windows não autorizou a captura da tela".to_string())?;
+
+    let source = DynamicImage::ImageRgba8(screenshot);
+    // Keep first-stage frame transfers strictly bounded, without storing pixels.
+    // Progressive downscaling also ensures high-resolution desktops don't silently
+    // cause an unbounded upload or memory spike.
+    for width in [1_600_u32, 1_280, 1_024, 800, 640, 480, 320] {
+        let scaled = source.resize(width, width * 2, FilterType::Triangle);
+        let mut cursor = Cursor::new(Vec::new());
+        scaled
+            .write_to(&mut cursor, ImageFormat::Png)
+            .map_err(|_| "Falha ao codificar o quadro da tela".to_string())?;
+        let png = cursor.into_inner();
+        if png.len() <= MAX_FRAME_BYTES {
+            return Ok(png);
+        }
+    }
+    Err("O quadro excedeu o limite de transferência permitido".to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn capture_png() -> Result<Vec<u8>, String> {
+    Err("Captura manual ainda não está disponível neste sistema operacional".to_string())
+}
+
+/// This command is an explicit action from the local host, not a background
+/// stream. The server rechecks host identity and Screen permission upon upload.
+#[tauri::command]
+pub async fn publish_manual_screen_frame(session_id: String) -> Result<(), String> {
+    let id = parse_session_id(&session_id)?;
+    let authorizations = list_active_authorizations().await?;
+    if !authorizations.iter().any(|item| {
+        item.session_id == id && item.granted.contains(&Capability::Screen)
+    }) {
+        return Err("A sessão não possui autorização ativa para visualizar a tela".to_string());
+    }
+    let frame = tauri::async_runtime::spawn_blocking(capture_png)
+        .await
+        .map_err(|_| "Falha ao realizar a captura nativa".to_string())??;
+    let path = format!("/v1/sessions/{id}/frame");
+    signed_request(Method::POST, path, frame).await?;
+    Ok(())
+}
+
+/// The operator must be authenticated and still have Screen permission.
+#[tauri::command]
+pub async fn fetch_authorized_screen_frame(session_id: String) -> Result<String, String> {
+    let id = parse_session_id(&session_id)?;
+    let path = format!("/v1/sessions/{id}/frame");
+    let png = signed_request(Method::GET, path, vec![]).await?;
+    if png.len() > MAX_FRAME_BYTES || !png.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Err("O servidor retornou um quadro inválido".to_string());
+    }
+    Ok(BASE64.encode(png))
 }
 
 #[cfg(test)]

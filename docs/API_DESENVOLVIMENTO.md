@@ -68,6 +68,14 @@ O backend agora dispõe de um **buffer temporário real de bytes PNG**, não um 
 
 **Segurança:** este endpoint só está habilitado no servidor local de desenvolvimento, em `127.0.0.1`. **Não há captura nativa automatizada, stream contínuo, E2EE nem relé entre computadores** nesta entrega. O servidor **não deve** ser exposto à LAN ou Internet. A próxima etapa é integrar captura pelo host, mostrar o frame no viewer e implementar o transporte criptografado remoto antes de anunciar acesso real.
 
+## Captura manual nativa no Windows (pré-alfa)
+
+O aplicativo Tauri no **Windows** passa a usar a biblioteca Rust [XCap](https://github.com/nashaofu/xcap) (licença Apache-2.0) para capturar um quadro real do **monitor principal** somente quando o **usuário no host clica** em `Compartilhar um quadro`, depois de uma sessão ter sido aprovada. A solicitação HTTP e os pixels são tratados no Rust; o React não acessa chaves privadas.
+
+O programa reduz progressivamente a resolução de capturas grandes antes de codificar PNG, com limite de 2 MiB por quadro. O operador pode clicar em `Ver último quadro autorizado` para baixar a imagem estática da própria sessão através de uma requisição assinada. Nenhuma captura fica salva em disco pelo fluxo implementado. Encerrar a autorização impede novas leituras e remove a imagem da visualização daquele solicitante.
+
+**Limitações:** somente Windows captura nesta primeira etapa; não existe captura automática, streaming contínuo, mouse, teclado ou áudio remoto. O backend ainda aceita conexões **apenas em localhost**, portanto o fluxo completo entre **dois computadores** continua bloqueado por transporte seguro e implantação correta do servidor. O CI verifica compilação em Windows/Linux, mas **não prova que o prompt de permissão/captura funciona em todos os monitores reais**; testes manuais e E2E são obrigatórios.
+
 ## Convites de suporte
 
 - Pedido exige identidades registradas, nonce, assinatura e expiração curta.

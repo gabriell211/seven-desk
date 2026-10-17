@@ -70,3 +70,23 @@ jobs:
       - run: node scripts/generate-icons.mjs
       - name: Compile native app
         run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
+
+  tauri-windows:
+    name: Tauri native compilation (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.90.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install frontend dependencies
+        run: npm install --no-audit --no-fund
+      - name: Build UI and native icons
+        run: |
+          npm run desktop:build
+          node scripts/generate-icons.mjs
+      - name: Verify Windows capture implementation compiles
+        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
