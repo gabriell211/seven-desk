@@ -31,6 +31,14 @@ pub struct SessionReceipt {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct ChatMessage {
+    sequence: u64,
+    sender: Uuid,
+    text: String,
+    sent_at_ms: u64,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct PendingInvitation {
     session_id: Uuid,
     operator: Uuid,
@@ -67,6 +75,7 @@ fn invitation(
     now: u64,
     request_mouse: bool,
     request_keyboard: bool,
+    request_chat: bool,
 ) -> Result<SessionRequest, String> {
     if operator == host {
         return Err("Não é permitido solicitar suporte para o próprio dispositivo".into());
@@ -77,6 +86,9 @@ fn invitation(
     }
     if request_keyboard {
         requested.insert(Capability::Keyboard);
+    }
+    if request_chat {
+        requested.insert(Capability::Chat);
     }
     Ok(SessionRequest {
         protocol_version: PROTOCOL_VERSION,
@@ -184,11 +196,12 @@ pub async fn create_session_request(
     target_id: String,
     request_mouse: bool,
     request_keyboard: bool,
+    request_chat: bool,
 ) -> Result<SessionReceipt, String> {
     let target = Uuid::parse_str(target_id.trim())
         .map_err(|_| "Digite o ID completo e válido do dispositivo remoto".to_string())?;
     let request = invitation(
-        read_device_id().await?, target, timestamp_ms()?, request_mouse, request_keyboard,
+        read_device_id().await?, target, timestamp_ms()?, request_mouse, request_keyboard, request_chat,
     )?;
     let data = serde_json::to_vec(&request).map_err(|_| "Falha ao criar convite".to_string())?;
     let raw = signed_request(Method::POST, "/v1/sessions".to_owned(), data).await?;
@@ -226,6 +239,7 @@ pub async fn decide_session(
     approve: bool,
     grant_mouse: bool,
     grant_keyboard: bool,
+    grant_chat: bool,
 ) -> Result<SessionReceipt, String> {
     let id = parse_session_id(&session_id)?;
     let mut granted = BTreeSet::new();
@@ -233,12 +247,43 @@ pub async fn decide_session(
         granted.insert(Capability::Screen);
         if grant_mouse { granted.insert(Capability::Input); }
         if grant_keyboard { granted.insert(Capability::Keyboard); }
+        if grant_chat { granted.insert(Capability::Chat); }
     }
     let body = serde_json::to_vec(&serde_json::json!({"approve": approve, "granted": granted}))
         .map_err(|_| "Falha ao codificar a autorização".to_string())?;
     let path = format!("/v1/sessions/{id}/decision");
     let raw = signed_request(Method::POST, path, body).await?;
     serde_json::from_slice(&raw).map_err(|_| "Resposta inválida para decisão".to_string())
+}
+
+#[tauri::command]
+pub async fn send_session_chat(session_id: String, text: String) -> Result<ChatMessage, String> {
+    if text.trim().is_empty() || text.len() > 2_048 || text.chars().count() > 500 {
+        return Err("Mensagem inválida ou muito longa".to_string());
+    }
+    let id = parse_session_id(&session_id)?;
+    let body = serde_json::to_vec(&serde_json::json!({"text": text}))
+        .map_err(|_| "Falha ao codificar mensagem".to_string())?;
+    let raw = signed_request(Method::POST, format!("/v1/sessions/{id}/chat"), body).await?;
+    serde_json::from_slice(&raw).map_err(|_| "Resposta inválida do chat".to_string())
+}
+
+#[tauri::command]
+pub async fn list_session_chat(session_id: String) -> Result<Vec<ChatMessage>, String> {
+    let id = parse_session_id(&session_id)?;
+    let raw = signed_request(Method::GET, format!("/v1/sessions/{id}/chat"), vec![]).await?;
+    serde_json::from_slice(&raw).map_err(|_| "Resposta inválida do histórico de chat".to_string())
+}
+
+#[tauri::command]
+pub async fn revoke_session_chat(session_id: String) -> Result<(), String> {
+    let id = parse_session_id(&session_id)?;
+    let body = serde_json::to_vec(&serde_json::json!({"capability": "chat"}))
+        .map_err(|_| "Falha ao codificar revogação".to_string())?;
+    let raw = signed_request(Method::POST, format!("/v1/sessions/{id}/revoke"), body).await?;
+    let _: SessionReceipt = serde_json::from_slice(&raw)
+        .map_err(|_| "Resposta inválida para revogação".to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -650,7 +695,7 @@ mod tests {
     fn invitation_only_requests_screen_and_has_short_expiry() {
         let operator = Uuid::new_v4();
         let host = Uuid::new_v4();
-        let request = invitation(operator, host, 1_000, false, false).unwrap();
+        let request = invitation(operator, host, 1_000, false, false, false).unwrap();
         assert_eq!(request.operator.0, operator);
         assert_eq!(request.host.0, host);
         assert_eq!(request.expires_at_ms, 121_000);
@@ -663,9 +708,9 @@ mod tests {
     fn mouse_is_never_requested_without_opt_in_and_coordinates_are_bounded() {
         let source = Uuid::new_v4();
         let dest = Uuid::new_v4();
-        let view = invitation(source, dest, 100, false, false).unwrap();
-        let control = invitation(source, dest, 100, true, false).unwrap();
-        let keyboard = invitation(source, dest, 100, false, true).unwrap();
+        let view = invitation(source, dest, 100, false, false, false).unwrap();
+        let control = invitation(source, dest, 100, true, false, false).unwrap();
+        let keyboard = invitation(source, dest, 100, false, true, false).unwrap();
         assert_eq!(view.requested, BTreeSet::from([Capability::Screen]));
         assert_eq!(
             control.requested,
@@ -674,6 +719,11 @@ mod tests {
         assert_eq!(
             keyboard.requested,
             BTreeSet::from([Capability::Screen, Capability::Keyboard])
+        );
+        let chat = invitation(source, dest, 100, false, false, true).unwrap();
+        assert_eq!(
+            chat.requested,
+            BTreeSet::from([Capability::Screen, Capability::Chat])
         );
         assert_eq!(normalized_pointer(0, 1920), 0);
         assert_eq!(normalized_pointer(10_000, 1920), 1919);
@@ -684,7 +734,7 @@ mod tests {
     #[test]
     fn self_invitation_and_invalid_session_ids_fail_closed() {
         let id = Uuid::new_v4();
-        assert!(invitation(id, id, 1_000, true, true).is_err());
+        assert!(invitation(id, id, 1_000, true, true, true).is_err());
         assert!(parse_session_id("not-a-uuid").is_err());
         assert_eq!(parse_session_id(&id.to_string()), Ok(id));
     }

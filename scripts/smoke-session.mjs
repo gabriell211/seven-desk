@@ -83,7 +83,7 @@ async function main() {
   const sessionId = randomUUID();
   const url = (suffix) => "/v1/sessions/" + sessionId + suffix;
   const invite = { protocol_version: 1, session_id: sessionId, operator: actor.deviceId, host: host.deviceId,
-    requested: ["screen", "input"], expires_at_ms: Date.now() + 120_000 };
+    requested: ["screen", "input", "chat"], expires_at_ms: Date.now() + 120_000 };
   // Tiny valid PNG fixture; no real desktop content is captured.
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lu0AAAAASUVORK5CYII=", "base64");
   let spawnError;
@@ -148,15 +148,33 @@ async function main() {
       assert.ok(outside.every((entry) => entry.session_id !== sessionId));
       await call(actor, "GET", url("/frame"), undefined, 403);
       await call(actor, "POST", url("/input"), { type: "move", x: 50, y: 50 }, 403);
+      await call(actor, "POST", url("/chat"), { text: "before consent" }, 403);
+      await call(outsider, "GET", url("/chat"), undefined, 403);
       await call(actor, "POST", url("/decision"), { approve: true, granted: ["screen"] }, 403);
       await call(outsider, "POST", url("/decision"), { approve: true, granted: ["screen"] }, 403);
     });
     await verify("authorization-and-permission-isolation", async () => {
-      const granted = await call(host, "POST", url("/decision"), { approve: true, granted: ["screen", "input"] }, 200);
+      const granted = await call(host, "POST", url("/decision"), { approve: true, granted: ["screen", "input", "chat"] }, 200);
       assert.equal(granted.status, "active");
       await call(actor, "POST", url("/keyboard"), { type: "character", value: "a" }, 403);
       await call(outsider, "GET", url("/frame"), undefined, 403);
       await call(actor, "GET", url("/frame"), undefined, 404);
+    });
+    await verify("chat-requires-grant-and-is-bounded", async () => {
+      assert.deepEqual(await call(actor, "GET", url("/chat"), undefined, 200), []);
+      await call(outsider, "POST", url("/chat"), { text: "unauthorized" }, 403);
+      const first = await call(actor, "POST", url("/chat"), { text: "Olá host!" }, 201);
+      assert.equal(first.text, "Olá host!");
+      assert.equal(first.sender, actor.deviceId);
+      await call(actor, "POST", url("/chat"), { text: "too fast" }, 429);
+      await call(actor, "POST", url("/chat"), { text: "  " }, 400);
+      await call(actor, "POST", url("/chat"), { text: "x".repeat(501) }, 400);
+      const inbox = await call(host, "GET", url("/chat"), undefined, 200);
+      assert.equal(inbox.length, 1);
+      assert.equal(inbox[0].text, "Olá host!");
+      const reply = await call(host, "POST", url("/chat"), { text: "Recebido" }, 201);
+      assert.equal(reply.sequence, first.sequence + 1);
+      assert.equal((await call(actor, "GET", url("/chat"), undefined, 200))[1].text, "Recebido");
     });
     await verify("frame-and-input-relay-with-bounded-drain", async () => {
       await call(host, "POST", url("/frame"), png, 204);
@@ -173,9 +191,30 @@ async function main() {
       assert.equal(paused.enabled, false);
       await call(actor, "GET", url("/frame"), undefined, 403);
       await call(actor, "POST", url("/input"), { type: "move", x: 1, y: 1 }, 403);
+      // Chat permission is separate from screen delivery and remains explicitly granted.
+      assert.equal((await call(host, "GET", url("/chat"), undefined, 200)).length, 2);
       await call(host, "POST", url("/frame"), png, 403);
       await call(host, "POST", url("/screen-delivery"), { enabled: true }, 200);
       await call(actor, "GET", url("/frame"), undefined, 404);
+    });
+    await verify("chat-grant-is-revocable", async () => {
+      const second = randomUUID();
+      const route = (suffix) => "/v1/sessions/" + second + suffix;
+      const secondInvite = { ...invite, session_id: second, expires_at_ms: Date.now() + 120_000 };
+      await call(actor, "POST", "/v1/sessions", secondInvite, 201);
+      await call(host, "POST", route("/decision"), { approve: true, granted: ["screen"] }, 200);
+      await call(actor, "GET", route("/chat"), undefined, 403); // requested, not granted
+      await call(host, "DELETE", route(""), undefined, 200);
+      const third = randomUUID();
+      const thirdRoute = (suffix) => "/v1/sessions/" + third + suffix;
+      await call(actor, "POST", "/v1/sessions", { ...secondInvite, session_id: third }, 201);
+      await call(host, "POST", thirdRoute("/decision"), { approve: true, granted: ["screen", "chat"] }, 200);
+      await call(actor, "POST", thirdRoute("/chat"), { text: "Temporary" }, 201);
+      await call(outsider, "POST", thirdRoute("/revoke"), { capability: "chat" }, 403);
+      await call(host, "POST", thirdRoute("/revoke"), { capability: "chat" }, 200);
+      await call(actor, "GET", thirdRoute("/chat"), undefined, 403);
+      await call(actor, "POST", thirdRoute("/chat"), { text: "revoked" }, 403);
+      await call(host, "DELETE", thirdRoute(""), undefined, 200);
     });
     await verify("termination-and-revocation", async () => {
       await call(outsider, "DELETE", url(""), undefined, 403);
@@ -183,6 +222,8 @@ async function main() {
       assert.equal(ended.status, "ended");
       await call(actor, "GET", url("/frame"), undefined, 403);
       await call(actor, "POST", url("/input"), { type: "click", x: 0, y: 0, button: "left" }, 403);
+      await call(actor, "GET", url("/chat"), undefined, 403);
+      await call(host, "POST", url("/chat"), { text: "post termination" }, 403);
       const active = await call(actor, "GET", "/v1/sessions/operator/active", undefined, 200);
       assert.ok(active.every((entry) => entry.session_id !== sessionId));
     });
