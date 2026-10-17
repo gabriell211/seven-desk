@@ -581,7 +581,7 @@ export function App() {
 
   function onViewerKeyDown(event: ReactKeyboardEvent<HTMLImageElement>): void {
     if (!viewerKeyboardActive || event.repeat ||
-        event.ctrlKey || event.altKey || event.metaKey || event.isComposing) return;
+        event.ctrlKey || event.altKey || event.metaKey || event.nativeEvent.isComposing) return;
     const allowed: Record<string, RemoteKeyboardEvent> = {
       Enter: { type: "key", key: "enter" },
       Backspace: { type: "key", key: "backspace" },
@@ -746,7 +746,13 @@ export function App() {
         {streamingSession && (
           <div className="panel" role="status" style={{ margin: 18, padding: 15, borderColor: "var(--accent)" }}>
             <strong>● Compartilhamento ativo — até 1 quadro por segundo</strong>
-            <p>A tela principal está sendo capturada enquanto esta janela permanecer aberta. {hostMouseSession === streamingSession ? "Controle de mouse REMOTO ATIVO." : "Mouse remoto desativado."} Sem teclado ou áudio remoto.</p>
+            <p>A tela principal está sendo capturada enquanto esta janela permanecer aberta. {hostMouseSession === streamingSession ? "Mouse REMOTO ATIVO." : "Mouse desativado."} {hostKeyboardSession === streamingSession ? "Teclado REMOTO ATIVO." : "Teclado desativado."} Sem áudio.</p>
+            {hostKeyboardSession === streamingSession && (
+              <button className="secondary" type="button"
+                onClick={() => { if (hostKeyboardSession) void toggleHostKeyboard(hostKeyboardSession); }}>
+                Parar teclado remoto imediatamente
+              </button>
+            )}
             {hostMouseSession === streamingSession && (
               <button className="secondary" type="button"
                 onClick={() => { if (hostMouseSession) void toggleHostMouse(hostMouseSession); }}>
@@ -818,11 +824,17 @@ export function App() {
                     aria-label="Solicitar controle de mouse além da visualização" />
                   Solicitar também controle de mouse (depende de aceite separado do host)
                 </label>
+                <label className="foot-note" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input type="checkbox" checked={requestKeyboard}
+                    onChange={(event) => setRequestKeyboard(event.target.checked)}
+                    aria-label="Solicitar também permissão de teclado remoto" />
+                  Solicitar teclado remoto (permissão independente do mouse)
+                </label>
                 <button className="primary connect" type="button" disabled={!mayConnect}
                   onClick={() => void sendInvitation()}>
                   <span aria-hidden="true">↗</span> {requesting ? "Solicitando..." : "Solicitar autorização"}
                 </button>
-                <div className="foot-note">Quadros PNG até ~1 FPS. O controle de mouse no Windows exige solicitação e aceite separados. Teclado e áudio remotos ainda não estão disponíveis.</div>
+                <div className="foot-note">Quadros PNG ~1 FPS. Mouse e teclado Windows requerem permissões separadas, aceite e ativação no host. Sem combinações de teclas privilegiadas e sem áudio remoto.</div>
                 {outboundSession && (
                   <div className="foot-note" role="status">
                     <strong>Estado:</strong> {
@@ -839,6 +851,7 @@ export function App() {
                         <button className="secondary" type="button"
                           onClick={() => {
                             setViewerMouseActive(false);
+                            setViewerKeyboardActive(false);
                             setViewingSession((current) => current === outboundSession.session_id ? null : outboundSession.session_id);
                             setLastFrame(null);
                           }}>
@@ -879,7 +892,7 @@ export function App() {
                 )}
                 {lastFrame && outboundSession?.status === "active" && (
                   <div className="foot-note">
-                    <p>{viewingSession ? "Atualização autorizada de até 1 quadro por segundo." : "Quadro estático autorizado."} {viewerMouseActive ? "Mouse remoto habilitado pelo operador; o host precisa manter a entrada ativa." : "Mouse desativado."} Sem teclado remoto.</p>
+                    <p>{viewingSession ? "Atualização autorizada de até 1 quadro por segundo." : "Quadro estático autorizado."} {viewerMouseActive ? "Mouse liberado no operador." : "Mouse desativado."} {viewerKeyboardActive ? "Teclado liberado no operador." : "Teclado desativado."} O host precisa manter cada entrada ativa.</p>
                     {operatorSessions.some((item) =>
                       item.session_id === outboundSession.session_id && item.granted.includes("input")
                     ) && (
@@ -888,7 +901,17 @@ export function App() {
                         {viewerMouseActive ? "Parar controle do mouse" : "Controlar mouse na imagem"}
                       </button>
                     )}
-                    <img src={lastFrame} alt="Imagem do desktop do host, com controle de mouse apenas quando autorizado"
+                    {operatorSessions.some((item) =>
+                      item.session_id === outboundSession.session_id && item.granted.includes("keyboard")
+                    ) && (
+                      <button className="secondary" type="button"
+                        onClick={() => setViewerKeyboardActive((current) => !current)}>
+                        {viewerKeyboardActive ? "Parar digitação" : "Ativar digitação remota"}
+                      </button>
+                    )}
+                    <img src={lastFrame} alt="Imagem do desktop do host com mouse e teclado apenas quando autorizados"
+                      tabIndex={viewerKeyboardActive ? 0 : -1}
+                      onKeyDown={onViewerKeyDown}
                       onPointerMove={(event) => forwardViewerPointer(event, "move")}
                       onPointerUp={(event) => {
                         if (event.button === 0) forwardViewerPointer(event, "click", "left");
@@ -926,6 +949,19 @@ export function App() {
                             Autorizar tela + mouse
                           </button>
                         )}
+                        {invitation.requested.includes("keyboard") && status?.operating_system === "windows" && (
+                          <button className="primary" type="button" disabled={decisionBusy !== null}
+                            onClick={() => void respondToInvitation(invitation.session_id, true, false, true)}>
+                            Autorizar tela + teclado
+                          </button>
+                        )}
+                        {invitation.requested.includes("input") && invitation.requested.includes("keyboard") &&
+                          status?.operating_system === "windows" && (
+                          <button className="primary" type="button" disabled={decisionBusy !== null}
+                            onClick={() => void respondToInvitation(invitation.session_id, true, true, true)}>
+                            Autorizar tela + mouse + teclado
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))
@@ -957,6 +993,13 @@ export function App() {
                             disabled={mouseBusy || (streamingSession !== item.session_id && hostMouseSession !== item.session_id)}
                             onClick={() => void toggleHostMouse(item.session_id)}>
                             {hostMouseSession === item.session_id ? "Parar mouse remoto" : "Permitir mouse agora"}
+                          </button>
+                        )}
+                        {item.granted.includes("keyboard") && status?.operating_system === "windows" && (
+                          <button className="secondary" type="button"
+                            disabled={keyboardBusy || (streamingSession !== item.session_id && hostKeyboardSession !== item.session_id)}
+                            onClick={() => void toggleHostKeyboard(item.session_id)}>
+                            {hostKeyboardSession === item.session_id ? "Parar teclado remoto" : "Permitir teclado agora"}
                           </button>
                         )}
                         <button className="secondary" type="button" disabled={ending}
