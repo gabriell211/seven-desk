@@ -134,6 +134,9 @@ pub fn run() {
             session_api::decide_session,
             session_api::session_status,
             session_api::set_screen_delivery,
+            session_api::send_remote_mouse,
+            session_api::configure_host_mouse,
+            session_api::poll_host_mouse,
             session_api::publish_manual_screen_frame,
             session_api::fetch_authorized_screen_frame,
             session_api::end_session

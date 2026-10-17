@@ -104,6 +104,16 @@ Os eventos usam coordenadas relativas de **0 a 10000**, com validação rigorosa
 
 **Não implementado nesta etapa:** teclado, injeção Windows, seleção de monitores, captura contínua de baixa latência e transporte E2EE. O backend intermediário consegue inspecionar eventos. Este canal é de pesquisa no laboratório, não está homologado para uso na Internet pública.
 
+## Controle interativo de mouse no Windows (pré-alfa)
+
+O cliente desktop permite solicitar **visualização + mouse** em um convite. O host escolhe **Autorizar só tela** ou **Autorizar tela + mouse** (o segundo só aparece para hosts Windows e convites que pediram `input`). Mesmo quando o host aceita `input`, **nenhum evento é executado automaticamente**: o host deve iniciar o compartilhamento de tela e clicar **Permitir mouse agora**. A UI mostra estado claramente e oferece **Parar mouse remoto imediatamente** e encerramento da sessão.
+
+O Rust/Tauri do operador assina os eventos normalizados de mouse, e o servidor os enfileira apenas para sessões com as permissões `screen` e `input`. O host lê por requisição assinada, verifica a concessão novamente e aplica os eventos usando a biblioteca nativa Enigo 0.6.1 no **monitor principal Windows**. O controle local inicia desabilitado a cada inicialização do aplicativo e só é habilitado após uma escolha explícita do host. A desativação limpa o interruptor em memória e a captura deixa de consumir novos eventos; lotes com até 32 eventos e TTL de 2 segundos minimizam a janela de execução tardia. O mouse é pausado ao interromper a imagem, minimizar a interface, perder rede ou encerrar/revogar a sessão.
+
+O operador só pode ativar o controle sobre a imagem após o backend confirmar que sua própria sessão recebeu a capacidade `input`. O mapeamento usa coordenadas normalizadas do conteúdo da imagem, considerando `object-fit: contain`, e filtra eventos de ponteiro fora da imagem. Eventos de movimento são limitados no frontend a intervalos de ~90 ms. Há suporte inicial a movimento, clique com botão esquerdo/direito/meio e rolagem no protocolo, embora a interface inicial forneça somente movimento e cliques.
+
+**Limitações obrigatórias:** fase de pesquisa, sem teclado/ABNT2, drag-and-drop, atalhos, monitor secundário, portal Wayland, UAC/desktop seguro, E2EE, nem homologação E2E em duas máquinas físicas. A aplicação não deve ganhar privilégios elevados automaticamente. O intermediário HTTPS de laboratório ainda consegue ler os eventos de entrada. Testes de CI confirmam a compilação, não a usabilidade real do cursor remoto. O operador e o host devem conhecer essas limitações antes de usar a versão pré-alfa.
+
 ## Convites de suporte
 
 - Pedido exige identidades registradas, nonce, assinatura e expiração curta.

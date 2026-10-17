@@ -4,9 +4,10 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use seven_identity::{Identity, SystemKeyStore};
-use seven_protocol::{Capability, DeviceId, PROTOCOL_VERSION, SessionId, SessionRequest};
+use seven_protocol::{Capability, DeviceId, MouseEvent, PROTOCOL_VERSION, SessionId, SessionRequest};
 use std::{
     collections::BTreeSet,
+    sync::Mutex,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
@@ -14,6 +15,9 @@ use uuid::Uuid;
 const INVITATION_TTL_MS: u64 = 120_000;
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
+
+// The native process defaults to refusing mouse injection on every launch.
+static ENABLED_HOST_MOUSE: Mutex<Option<Uuid>> = Mutex::new(None);
 
 #[derive(Serialize, Deserialize)]
 pub struct SessionReceipt {
@@ -52,7 +56,7 @@ fn timestamp_ms() -> Result<u64, String> {
         .as_millis() as u64)
 }
 
-fn invitation(operator: Uuid, host: Uuid, now: u64) -> Result<SessionRequest, String> {
+fn invitation(operator: Uuid, host: Uuid, now: u64, request_mouse: bool) -> Result<SessionRequest, String> {
     if operator == host {
         return Err("Não é permitido solicitar suporte para o próprio dispositivo".into());
     }
@@ -61,7 +65,11 @@ fn invitation(operator: Uuid, host: Uuid, now: u64) -> Result<SessionRequest, St
         session_id: SessionId(Uuid::new_v4()),
         operator: DeviceId(operator),
         host: DeviceId(host),
-        requested: BTreeSet::from([Capability::Screen]),
+        requested: if request_mouse {
+            BTreeSet::from([Capability::Screen, Capability::Input])
+        } else {
+            BTreeSet::from([Capability::Screen])
+        },
         expires_at_ms: now.saturating_add(INVITATION_TTL_MS),
     })
 }
@@ -158,10 +166,10 @@ async fn read_device_id() -> Result<Uuid, String> {
 }
 
 #[tauri::command]
-pub async fn create_session_request(target_id: String) -> Result<SessionReceipt, String> {
+pub async fn create_session_request(target_id: String, request_mouse: bool) -> Result<SessionReceipt, String> {
     let target = Uuid::parse_str(target_id.trim())
         .map_err(|_| "Digite o ID completo e válido do dispositivo remoto".to_string())?;
-    let request = invitation(read_device_id().await?, target, timestamp_ms()?)?;
+    let request = invitation(read_device_id().await?, target, timestamp_ms()?, request_mouse)?;
     let data = serde_json::to_vec(&request).map_err(|_| "Falha ao criar convite".to_string())?;
     let raw = signed_request(Method::POST, "/v1/sessions".to_owned(), data).await?;
     serde_json::from_slice(&raw).map_err(|_| "Resposta inválida para convite".to_string())
@@ -193,9 +201,15 @@ pub async fn list_active_operator_sessions() -> Result<Vec<ActiveOperatorSession
 }
 
 #[tauri::command]
-pub async fn decide_session(session_id: String, approve: bool) -> Result<SessionReceipt, String> {
+pub async fn decide_session(
+    session_id: String,
+    approve: bool,
+    grant_mouse: bool,
+) -> Result<SessionReceipt, String> {
     let id = parse_session_id(&session_id)?;
-    let body = if approve {
+    let body = if approve && grant_mouse {
+        br#"{"approve":true,"granted":["screen","input"]}"#.to_vec()
+    } else if approve {
         br#"{"approve":true,"granted":["screen"]}"#.to_vec()
     } else {
         br#"{"approve":false,"granted":[]}"#.to_vec()
@@ -216,9 +230,168 @@ pub async fn session_status(session_id: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn end_session(session_id: String) -> Result<SessionReceipt, String> {
     let id = parse_session_id(&session_id)?;
+    {
+        let mut current = ENABLED_HOST_MOUSE
+            .lock()
+            .map_err(|_| "Falha no controle local do mouse".to_string())?;
+        if *current == Some(id) {
+            *current = None;
+        }
+    }
     let path = format!("/v1/sessions/{id}");
     let raw = signed_request(Method::DELETE, path, vec![]).await?;
     serde_json::from_slice(&raw).map_err(|_| "Resposta inválida para encerramento".to_string())
+}
+
+fn host_mouse_is_enabled(id: Uuid) -> Result<bool, String> {
+    Ok(*ENABLED_HOST_MOUSE
+        .lock()
+        .map_err(|_| "Falha no controle local do mouse".to_string())?
+        == Some(id))
+}
+
+/// Operator may only submit bounded mouse events signed with its native key.
+/// The backend independently checks that Input and Screen were granted.
+#[tauri::command]
+pub async fn send_remote_mouse(session_id: String, event: MouseEvent) -> Result<(), String> {
+    let id = parse_session_id(&session_id)?;
+    event.validate().map_err(|_| "Evento de mouse inválido".to_string())?;
+    let body = serde_json::to_vec(&event)
+        .map_err(|_| "Falha ao codificar o evento do mouse".to_string())?;
+    signed_request(Method::POST, format!("/v1/sessions/{id}/input"), body).await?;
+    Ok(())
+}
+
+/// Foreground host opt-in is separate from granting the session capability.
+/// On every new activation, drain any previously queued events so old clicks
+/// cannot execute after the host changes its mind.
+#[tauri::command]
+pub async fn configure_host_mouse(session_id: String, enabled: bool) -> Result<(), String> {
+    let id = parse_session_id(&session_id)?;
+    if !enabled {
+        let mut current = ENABLED_HOST_MOUSE
+            .lock()
+            .map_err(|_| "Falha no controle local do mouse".to_string())?;
+        if *current == Some(id) {
+            *current = None;
+        }
+        return Ok(());
+    }
+    if !cfg!(target_os = "windows") {
+        return Err("Controle nativo de mouse disponível apenas no Windows".to_string());
+    }
+    let authorizations = list_active_authorizations().await?;
+    if !authorizations.iter().any(|item| {
+        item.session_id == id
+            && item.granted.contains(&Capability::Input)
+            && item.granted.contains(&Capability::Screen)
+    }) {
+        return Err("O host não concedeu permissão para controle do mouse".to_string());
+    }
+    // Drain a prior input batch before this user action activates injection.
+    let path = format!("/v1/sessions/{id}/input");
+    let raw = signed_request(Method::GET, path, vec![]).await?;
+    let _: Vec<MouseEvent> = serde_json::from_slice(&raw)
+        .map_err(|_| "Resposta inválida do canal de entrada".to_string())?;
+    *ENABLED_HOST_MOUSE
+        .lock()
+        .map_err(|_| "Falha no controle local do mouse".to_string())? = Some(id);
+    Ok(())
+}
+
+fn normalized_pointer(value: u16, dimension: i32) -> i32 {
+    let limit = dimension.saturating_sub(1).max(0) as i64;
+    ((i64::from(value) * limit) / 10_000) as i32
+}
+
+#[cfg(target_os = "windows")]
+fn apply_mouse_batch(id: Uuid, events: Vec<MouseEvent>) -> Result<usize, String> {
+    use enigo::{Axis, Button, Coordinate, Direction, Enigo, Mouse, Settings};
+    let mut backend = Enigo::new(&Settings::default())
+        .map_err(|_| "Não foi possível inicializar entrada nativa do Windows".to_string())?;
+    let (width, height) = backend
+        .main_display()
+        .map_err(|_| "Não foi possível identificar o monitor principal".to_string())?;
+    if width < 2 || height < 2 {
+        return Err("Resolução inválida do monitor principal".to_string());
+    }
+    let mut applied = 0;
+    for event in events {
+        // A UI host can stop input between individual events in a batch.
+        if !host_mouse_is_enabled(id)? {
+            break;
+        }
+        event.validate().map_err(|_| "Evento de entrada fora dos limites".to_string())?;
+        let (x, y) = match event {
+            MouseEvent::Move { x, y }
+            | MouseEvent::Click { x, y, .. }
+            | MouseEvent::Scroll { x, y, .. } => (x, y),
+        };
+        backend
+            .move_mouse(
+                normalized_pointer(x, width),
+                normalized_pointer(y, height),
+                Coordinate::Abs,
+            )
+            .map_err(|_| "O Windows recusou o movimento do cursor".to_string())?;
+        match event {
+            MouseEvent::Move { .. } => {}
+            MouseEvent::Click { button, .. } => {
+                let button = match button {
+                    seven_protocol::MouseButton::Left => Button::Left,
+                    seven_protocol::MouseButton::Right => Button::Right,
+                    seven_protocol::MouseButton::Middle => Button::Middle,
+                };
+                backend
+                    .button(button, Direction::Click)
+                    .map_err(|_| "O Windows recusou o clique".to_string())?;
+            }
+            MouseEvent::Scroll { steps, .. } => {
+                backend
+                    .scroll(i32::from(steps), Axis::Vertical)
+                    .map_err(|_| "O Windows recusou a rolagem".to_string())?;
+            }
+        }
+        applied += 1;
+    }
+    Ok(applied)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn apply_mouse_batch(_id: Uuid, _events: Vec<MouseEvent>) -> Result<usize, String> {
+    Err("Controle remoto de mouse disponível somente no Windows".to_string())
+}
+
+/// The host retrieves and applies events only while the local user has
+/// explicitly enabled the input path. No keyboard, UAC or elevated desktop.
+#[tauri::command]
+pub async fn poll_host_mouse(session_id: String) -> Result<usize, String> {
+    let id = parse_session_id(&session_id)?;
+    if !host_mouse_is_enabled(id)? {
+        return Err("Controle do mouse desativado no host".to_string());
+    }
+    let path = format!("/v1/sessions/{id}/input");
+    let raw = signed_request(Method::GET, path, vec![]).await?;
+    let events: Vec<MouseEvent> = serde_json::from_slice(&raw)
+        .map_err(|_| "Lote de entrada inválido".to_string())?;
+    if events.len() > 32 || events.iter().any(|event| event.validate().is_err()) {
+        return Err("Lote de entrada excedeu os limites permitidos".to_string());
+    }
+    if events.is_empty() || !host_mouse_is_enabled(id)? {
+        return Ok(0);
+    }
+    // Check grant again after network delivery, before touching OS input.
+    let authorized = list_active_authorizations().await?.iter().any(|item| {
+        item.session_id == id
+            && item.granted.contains(&Capability::Input)
+            && item.granted.contains(&Capability::Screen)
+    });
+    if !authorized {
+        return Err("Permissão de mouse revogada pelo host".to_string());
+    }
+    tauri::async_runtime::spawn_blocking(move || apply_mouse_batch(id, events))
+        .await
+        .map_err(|_| "Falha na thread nativa de mouse".to_string())?
 }
 
 /// Host-only on/off switch for the frame channel; changing to false clears
@@ -323,7 +496,7 @@ mod tests {
     fn invitation_only_requests_screen_and_has_short_expiry() {
         let operator = Uuid::new_v4();
         let host = Uuid::new_v4();
-        let request = invitation(operator, host, 1_000).unwrap();
+        let request = invitation(operator, host, 1_000, false).unwrap();
         assert_eq!(request.operator.0, operator);
         assert_eq!(request.host.0, host);
         assert_eq!(request.expires_at_ms, 121_000);
@@ -333,9 +506,26 @@ mod tests {
     }
 
     #[test]
+    fn mouse_is_never_requested_without_opt_in_and_coordinates_are_bounded() {
+        let source = Uuid::new_v4();
+        let dest = Uuid::new_v4();
+        let view = invitation(source, dest, 100, false).unwrap();
+        let control = invitation(source, dest, 100, true).unwrap();
+        assert_eq!(view.requested, BTreeSet::from([Capability::Screen]));
+        assert_eq!(
+            control.requested,
+            BTreeSet::from([Capability::Screen, Capability::Input])
+        );
+        assert_eq!(normalized_pointer(0, 1920), 0);
+        assert_eq!(normalized_pointer(10_000, 1920), 1919);
+        assert_eq!(normalized_pointer(5_000, 1080), 539);
+        assert_eq!(normalized_pointer(8_000, 0), 0);
+    }
+
+    #[test]
     fn self_invitation_and_invalid_session_ids_fail_closed() {
         let id = Uuid::new_v4();
-        assert!(invitation(id, id, 1_000).is_err());
+        assert!(invitation(id, id, 1_000, true).is_err());
         assert!(parse_session_id("not-a-uuid").is_err());
         assert_eq!(parse_session_id(&id.to_string()), Ok(id));
     }
