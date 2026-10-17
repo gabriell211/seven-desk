@@ -85,6 +85,13 @@ A documentação experimental dos endpoints está em [API_DESENVOLVIMENTO.md](AP
 
 **Validação:** os PRs #87–#90 estão integrados. Todos os workflows verificados para #89 e #90 tiveram seis jobs aprovados. Isso confirma compilação e testes automatizados, **não** usabilidade E2E ou produção. Ainda não há controle remoto completo, E2EE, codificação de vídeo profissional, instalação de serviço host autônomo nem assinatura/homologação de instaladores.
 
+## Canal de mouse interativo — 17/10/2026
+
+- [PR #91](https://github.com/gabriell211/seven-desk/pull/91) **merged, CI 6/6**: contrato normalizado de eventos de mouse, fila assinada operador→host, rate-limit, TTL curto, isolamento por papel/permissão e descarte imediato ao revogar ou pausar.
+- [PR #92](https://github.com/gabriell211/seven-desk/pull/92) **merged, CI 6/6**: Tauri Windows aplica mouse via Enigo ao monitor principal somente após permissão `input` escolhida pelo host e habilitação local explícita. Interface envia movimento e clique com controle de taxa; host pode parar mouse e compartilhamento a qualquer momento.
+
+**Estado:** há um caminho completo de código para eventos de mouse entre dois clientes autenticados via servidor HTTPS de laboratório, mas **não existe homologação prática em dois equipamentos Windows** e o backend ainda não implementa E2EE, buffer eficiente de vídeo nem serviço host permanente. O protocolo de teclado/atalhos, monitores secundários, arraste, proteção contra desktop elevado, benchmarks e suporte multiplataforma ainda são pendências. O mouse não habilita acesso não assistido.
+
 ## O que ainda bloqueia uso real
 
 1. Implementar serviço host real e permanente, rotação/revogação de identidades e operação multi-dispositivo. A UI já consegue registrar sua presença no servidor local por requisição assinada, mas **isso não habilita controle remoto**.
