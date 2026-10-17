@@ -38,9 +38,9 @@ O prefixo `[P#]` no título é o indicador de fase. A atribuição de versões e
 | [#12](https://github.com/gabriell211/seven-desk/issues/12) | Pipeline de mídia e renderização |
 | [#13](https://github.com/gabriell211/seven-desk/issues/13) | Consentimento, permissão e indicador de sessão |
 | [#14](https://github.com/gabriell211/seven-desk/issues/14) | E2E de duas máquinas reais |
-| [#15](https://github.com/gabriell211/seven-desk/issues/15) | Instalador Windows / portátil |
+| [#15](https://github.com/gabriell211/seven-desk/issues/15) | Instalador oficial Seven Desk para Windows |
 
-**Gate P1:** acesso assistido Windows↔Windows funciona ponta a ponta, nunca aceita sessão sem autorização e mantém encerramento imediato pelo host.
+**Gate P1:** acesso assistido Windows↔Windows funciona ponta a ponta, nunca aceita sessão sem autorização, mantém encerramento imediato pelo host e pode ser instalado pelo instalador oficial Seven Desk no Windows.
 
 ## P2 — Beta multiplataforma
 
@@ -53,12 +53,12 @@ O prefixo `[P#]` no título é o indicador de fase. A atribuição de versões e
 | [#20](https://github.com/gabriell211/seven-desk/issues/20) | Linux X11/Wayland |
 | [#21](https://github.com/gabriell211/seven-desk/issues/21) | macOS |
 | [#22](https://github.com/gabriell211/seven-desk/issues/22) | Entrada multiplataforma |
-| [#23](https://github.com/gabriell211/seven-desk/issues/23) | Empacotamento e atualização assinada |
+| [#23](https://github.com/gabriell211/seven-desk/issues/23) | Instaladores oficiais Seven Desk para Linux/macOS e atualização assinada |
 | [#24](https://github.com/gabriell211/seven-desk/issues/24) | Contatos, favoritos e grupos |
 | [#25](https://github.com/gabriell211/seven-desk/issues/25) | Recuperação de conectividade |
 | [#26](https://github.com/gabriell211/seven-desk/issues/26) | A11y e internacionalização |
 
-**Gate P2:** matriz homologada por SO e rede, artefatos instaláveis, fluxo de suporte seguro, sem regressões críticas.
+**Gate P2:** matriz homologada por SO e rede, instalação pelo instalador/pacote oficial Seven Desk em Linux e macOS, fluxo de suporte seguro, sem regressões críticas.
 
 ## P3 — Operação profissional
 
