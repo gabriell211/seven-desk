@@ -907,7 +907,7 @@ export function App() {
                     aria-label="Solicitar chat de texto durante a sessão" />
                   Solicitar chat de texto (autorização independente do host)
                 </label>
-                <button className="primary connect" type="button" disabled={!mayConnect
+                <button className="primary connect" type="button" disabled={!mayConnect}
                   onClick={() => void sendInvitation()}>
                   <span aria-hidden="true">↗</span> {requesting ? "Solicitando..." : "Solicitar autorização"}
                 </button>
