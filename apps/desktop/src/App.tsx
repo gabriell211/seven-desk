@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getBackendStatus, getLocalStatus, type LocalStatus } from "./bridge";
+import { getBackendStatus, getLocalStatus, initializeIdentity, type LocalStatus } from "./bridge";
 
 type Page = "inicio" | "dispositivos" | "configuracoes";
 type Theme = "dark" | "light";
@@ -20,6 +20,7 @@ export function App() {
   const [target, setTarget] = useState("");
   const [feedback, setFeedback] = useState("");
   const [busy, setBusy] = useState(true);
+  const [enrolling, setEnrolling] = useState(false);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -49,6 +50,20 @@ export function App() {
     void check();
     return () => { mounted = false; controller.abort(); };
   }, []);
+
+  async function activateIdentity(): Promise<void> {
+    setEnrolling(true);
+    try {
+      await initializeIdentity();
+      const updated = await getLocalStatus();
+      setStatus(updated);
+      setFeedback("Identidade criada e protegida pelo armazenamento seguro do sistema.");
+    } catch (error: unknown) {
+      setFeedback(error instanceof Error ? error.message : "Não foi possível ativar este dispositivo.");
+    } finally {
+      setEnrolling(false);
+    }
+  }
 
   async function copyId(): Promise<void> {
     if (!status?.device_id) return;
@@ -113,10 +128,18 @@ export function App() {
                 <label className="field-label" htmlFor="own-id">Seu ID</label>
                 <div className="input-group">
                   <input id="own-id" value={status?.device_id ?? ""} placeholder={busy ? "Carregando..." : "Aguardando configuração"} readOnly aria-describedby="device-note" />
-                  <button className="secondary" type="button" disabled={!hasIdentity} onClick={() => void copyId()}>Copiar</button>
+                  {hasIdentity ? (
+                    <button className="secondary" type="button" onClick={() => void copyId()}>Copiar</button>
+                  ) : (
+                    <button className="secondary" type="button" disabled={busy || enrolling} onClick={() => void activateIdentity()}>
+                      {enrolling ? "Ativando..." : "Ativar"}
+                    </button>
+                  )}
                 </div>
                 <div className="foot-note" id="device-note"><span className="dot amber" />
-                  {hostAvailable ? "Disponível para configuração de acesso" : "O serviço remoto ainda não foi instalado/configurado."}
+                  {hasIdentity
+                    ? "Identidade local protegida. Serviço remoto ainda não configurado."
+                    : "Ative uma identidade local antes de conectar ou compartilhar seu ID."}
                 </div>
               </section>
               <section className="panel connection-panel" aria-labelledby="connect-heading">

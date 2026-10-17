@@ -6,6 +6,7 @@ Esta documentação descreve o **código que está começando a existir**. Não 
 
 - `crates/protocol`: contratos versionados e máquina de estados fail-closed de sessão; testes unitários de aceite, rejeição, revogação, expiração e escalada de permissões.
 - `crates/security`: verificação de assinaturas Ed25519 para solicitações, vinculação de identidade à chave pública e proteção contra nonce reutilizado.
+- `crates/identity`: geração criptográfica de identidade local persistente com armazenamento seguro nativo (quando disponível), sem colocar a chave privada na interface.
 - `apps/server`: API de desenvolvimento Rust/Axum com registro de identidade (proof of possession), convites de sessão e decisões verificadas. Armazena dados em memória e restringe bind remoto.
 - `apps/desktop`: aplicativo React 19 + TypeScript + Tauri 2 com interface, navegação, estado local nativo e preferências visuais, sem simular sessões.
 - `scripts/generate-icons.mjs`: geração determinística de ícones binários para os três instaladores desktop usando apenas Node.js.
@@ -56,7 +57,7 @@ A chave identifica o dispositivo por UUID derivado do primeiro bloco de 16 bytes
 
 ## O que ainda bloqueia uso real
 
-1. Cliente Ed25519 no host com armazenamento seguro e persistência/revogação; o front não inventa ID.
+1. Integração de cadastro de identidade assinada no serviço host, revogação/rotação de chaves e operação multi-dispositivo. A identidade local já usa armazenamento seguro, mas ainda não concede acesso remoto.
 2. Authn/authz final, persistência PostgreSQL, limpeza de sessões e proteção contra DoS.
 3. Comunicação de controle protegida ponta a ponta (P2P/relay), captura/codec e teclado/mouse com API nativa.
 4. Serviço do host/IPC e atualização assinada do aplicativo.

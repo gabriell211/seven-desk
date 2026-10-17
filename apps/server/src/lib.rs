@@ -8,7 +8,7 @@ use axum::{
     Json, Router,
     body::Bytes,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, HeaderValue, Method},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -23,6 +23,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
+use tower_http::cors::CorsLayer;
 
 const MAX_INVITATION_MS: u64 = 5 * 60 * 1_000;
 const MAX_PAYLOAD_SIZE: usize = 64 * 1_024;
@@ -283,7 +284,16 @@ async fn get_session(
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
-        .route("/healthz", get(health))
+        .route("/healthz", get(health).layer(
+            CorsLayer::new()
+                .allow_origin([
+                    HeaderValue::from_static("http://127.0.0.1:1420"),
+                    HeaderValue::from_static("http://localhost:1420"),
+                    HeaderValue::from_static("http://tauri.localhost"),
+                    HeaderValue::from_static("tauri://localhost"),
+                ])
+                .allow_methods([Method::GET]),
+        ))
         .route("/v1/devices", post(register))
         .route("/v1/sessions", post(create_session))
         .route("/v1/sessions/{id}", get(get_session).delete(terminate))

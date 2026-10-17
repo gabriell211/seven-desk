@@ -1,0 +1,16 @@
+[package]
+name = "seven-identity"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+seven-protocol = { path = "../protocol" }
+seven-security = { path = "../security" }
+ed25519-dalek = { version = "2.2", features = ["zeroize"] }
+getrandom = "0.3"
+hex = "0.4"
+keyring = { version = "3.6.3", default-features = false, features = ["apple-native", "windows-native", "sync-secret-service"] }
+thiserror.workspace = true
+uuid.workspace = true

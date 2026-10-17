@@ -1,6 +1,6 @@
 # Seven Desk — Roadmap operacional e rastreabilidade
 
-> **Situação em 16/10/2026:** produto em planejamento. O backlog tem **73 issues** e não corresponde a funcionalidades implementadas. Não há 1.0 homologada.
+> **Situação em 17/10/2026:** desenvolvimento pré-alfa iniciado. O backlog tem **73 issues**; o repositório já possui fundação de código Rust/React/Tauri, mas não há controle remoto pronto ou 1.0 homologada. Consulte [a implementação verificada](IMPLEMENTACAO.md).
 
 ## Convenções e critérios de priorização
 

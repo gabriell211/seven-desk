@@ -16,6 +16,11 @@ export interface BackendStatus {
   production_ready: boolean;
 }
 
+export async function initializeIdentity(): Promise<string> {
+  if (!isTauri()) throw new Error("Ativação disponível apenas no aplicativo instalado.");
+  return invoke<string>("initialize_identity");
+}
+
 export async function getLocalStatus(): Promise<LocalStatus | null> {
   if (!isTauri()) return null;
   return invoke<LocalStatus>("local_status");
