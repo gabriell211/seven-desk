@@ -4,7 +4,7 @@
 
 ## Objetivo
 
-Testar duas instalações Seven Desk com identidades Ed25519 distintas, conectadas ao mesmo **servidor HTTPS de desenvolvimento** por uma VPN privada. O modo inicial permite convite → consentimento → envio manual de um quadro PNG pelo host Windows → visualização pelo operador → revogação, **sem mouse/teclado remoto ou vídeo contínuo**.
+Testar duas instalações Seven Desk com identidades Ed25519 distintas, conectadas ao mesmo **servidor HTTPS de desenvolvimento** por uma VPN privada. O modo experimental já inclui convite → consentimento → envio manual ou periódico de quadros PNG pelo host Windows (~1 FPS) → visualização pelo operador → revogação; mouse e teclado básicos no Windows exigem permissões separadas e acionamento voluntário no host. **Não há vídeo de baixa latência, criptografia ponta a ponta nem teste E2E homologado entre computadores reais.**
 
 ## Pré-requisitos
 
