@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 build = "build.rs"
-license = "UNLICENSED"
+license = "AGPL-3.0-only"
 
 [lib]
 name = "seven_desk_desktop_lib"

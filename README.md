@@ -160,7 +160,7 @@ A distribuição oficial do aplicativo desktop deverá ser feita pelo **Instalad
 | Estado efêmero | Redis (quando justificado) | Presença, rate limit, filas efêmeras e coordenação |
 | Observabilidade | Logs estruturados, métricas e tracing | Diagnóstico com minimização de dados sensíveis |
 
-**Decisões ainda abertas:** transporte definitivo, codec por plataforma, modelo criptográfico E2EE auditável, topologia de relay, empacotamento do serviço, licença e infraestrutura gerenciada/self-hosted. Devem ser decididas por ADRs, protótipos e testes reproduzíveis — não por suposição. Leia a [arquitetura proposta](docs/ARQUITETURA.md).
+**Decisões ainda abertas:** transporte definitivo, codec por plataforma, modelo criptográfico E2EE auditável, topologia de relay, empacotamento do serviço e infraestrutura gerenciada/self-hosted. O código original do projeto adota a licença AGPL-3.0-only; a auditoria de licenças de terceiros continua pendente. Devem ser decididas por ADRs, protótipos e testes reproduzíveis — não por suposição. Leia a [arquitetura proposta](docs/ARQUITETURA.md).
 
 ### Componentes sugeridos do monorepo
 
@@ -281,7 +281,9 @@ Uma funcionalidade só pode ser marcada como concluída quando possuir:
 
 ## Licenciamento e uso
 
-**Licença ainda não definida.** A disponibilidade pública do código não concede automaticamente permissão para redistribuição, modificação ou uso além do permitido pela legislação aplicável. A licença deverá ser escolhida e adicionada ao repositório antes de divulgar releases.
+**Licença do código original: GNU Affero General Public License v3.0 (AGPL-3.0-only).** Consulte o texto integral em [LICENSE](LICENSE) e as orientações em [docs/LICENCIAMENTO.md](docs/LICENCIAMENTO.md). É permitido utilizar, estudar, modificar e redistribuir o software, inclusive comercialmente, respeitando as condições da AGPLv3. Distribuições de versões modificadas e serviços que permitam interação remota pela rede devem cumprir as obrigações aplicáveis de disponibilização do código-fonte correspondente.
+
+**Componentes de terceiros:** bibliotecas, APIs, codecs e materiais importados permanecem sob suas próprias licenças e devem ser auditados antes de releases. A adoção da AGPL não autoriza copiar qualquer código ou marca de terceiros sem respeitar seus avisos e permissões. Consulte também a [issue #67](https://github.com/gabriell211/seven-desk/issues/67).
 
 O Seven Desk destina-se exclusivamente a **acesso autorizado a equipamentos**. Operações em dispositivos de terceiros exigem consentimento ou base legítima e devem seguir as políticas aplicáveis.
 

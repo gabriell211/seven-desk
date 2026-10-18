@@ -100,7 +100,7 @@ A instalação não confere acesso permanente. **Assinatura, hashes, upgrade, ro
 | ADR-003 | Identidade e chaves | Threat model + autenticação de pares + revogação | #50 |
 | ADR-004 | Host service/IPC | Privilégio mínimo, auth IPC, sessão Windows, crash | #49 e #54 |
 | ADR-005 | Banco/tenancy e migração | Isolamento, backup, índices e compatibilidade | #32 e #69 |
-| ADR-006 | Licenciamento/ativos | Escolha de licença e inventário de direitos | #67 |
+| ADR-006 | Licenciamento/ativos | Código original: AGPL-3.0-only (definido); inventário de ativos e licenças de terceiros ainda pendente | #67 |
 | ADR-007 | Instalação/updates | Bundle assinado, serviço opcional, rollback | #15, #23 |
 | ADR-008 | Escopo do produto 1.0 | Inclusões/exclusões e critérios de aceitação | #38 e docs/HOMOLOGACAO.md |
 

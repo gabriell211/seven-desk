@@ -7,7 +7,7 @@ O desenvolvimento deverá preservar segurança, reprodutibilidade, acessibilidad
 1. Escolha uma issue com dependências resolvidas; as fases estão em [docs/ROADMAP.md](docs/ROADMAP.md).
 2. Confira [arquitetura](docs/ARQUITETURA.md), [matriz funcional](docs/MATRIZ_FUNCIONAL.md), [segurança](SECURITY.md) e [homologação](docs/HOMOLOGACAO.md).
 3. Para transporte, autenticação, serviço privilegiado, criptografia ou banco de dados, documente primeiro a ADR e o threat model.
-4. Não importe código ou mídia de terceiros sem autorização de licença e inventário em #67.
+4. O código original enviado ao Seven Desk deve poder ser distribuído sob **AGPL-3.0-only**. Ao contribuir, confirme que você detém os direitos necessários e preserva os avisos de autoria; não importe código, mídia ou marcas de terceiros sem autorização de licença e inventário em #67. Leia [LICENSE](LICENSE) e [docs/LICENCIAMENTO.md](docs/LICENCIAMENTO.md).
 
 ## Pull requests
 
