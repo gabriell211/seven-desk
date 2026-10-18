@@ -92,7 +92,7 @@ A documentação experimental dos endpoints está em [API_DESENVOLVIMENTO.md](AP
 - [PR #91](https://github.com/gabriell211/seven-desk/pull/91) **merged, CI 6/6**: contrato normalizado de eventos de mouse, fila assinada operador→host, rate-limit, TTL curto, isolamento por papel/permissão e descarte imediato ao revogar ou pausar.
 - [PR #92](https://github.com/gabriell211/seven-desk/pull/92) **merged, CI 6/6**: Tauri Windows aplica mouse via Enigo ao monitor principal somente após permissão `input` escolhida pelo host e habilitação local explícita. Interface envia movimento e clique com controle de taxa; host pode parar mouse e compartilhamento a qualquer momento.
 
-**Estado:** há caminhos experimentais de código para mouse e teclado básico entre dois clientes autenticados via servidor HTTPS de laboratório, mas **não existe homologação prática em dois equipamentos Windows** e o backend ainda não implementa E2EE, buffer eficiente de vídeo nem serviço host permanente. Atalhos/modificadores, validação de layouts regionais, monitores secundários, arraste, proteção contra desktop elevado, benchmarks e suporte multiplataforma ainda são pendências. A entrada não habilita acesso não assistido.
+**Estado:** há caminhos experimentais de código para mouse e teclado básico entre dois clientes autenticados via servidor HTTPS de laboratório, mas **não existe homologação prática entre dois equipamentos** e o backend ainda não implementa E2EE, buffer eficiente de vídeo nem serviço host permanente. Atalhos/modificadores, validação de layouts regionais, monitores secundários, arraste, proteção contra desktop elevado e benchmarks ainda são pendências. A entrada não habilita acesso não assistido.
 
 ## Teclado básico consentido e correção da assinatura de quadros — 17/10/2026
 
@@ -104,12 +104,40 @@ As verificações locais com Rust 1.90 passaram: formatação, Clippy sem avisos
 
 ## O que ainda bloqueia uso real
 
-1. Implementar serviço host real e permanente, rotação/revogação de identidades e operação multi-dispositivo. A UI já consegue registrar sua presença no servidor local por requisição assinada, mas **isso não habilita controle remoto**.
+1. Implementar serviço host real e permanente, rotação/revogação de identidades e operação multi-dispositivo. O aplicativo já registra presença e permite captura e entrada básicas por sessão consentida no laboratório, mas depende da janela aberta e não sustenta acesso remoto contínuo.
 2. Authn/authz final, persistência PostgreSQL, limpeza de sessões e proteção contra DoS.
-3. Comunicação de controle protegida ponta a ponta (P2P/relay), codecs com baixa latência e **teclado/mouse** com APIs nativas. A captura Windows e envio de PNG são experimentais; não equivalem ao motor de vídeo pronto.
+3. Comunicação de controle protegida ponta a ponta (P2P/relay), codecs com baixa latência e **teclado/mouse** com APIs nativas. A captura Windows e a prévia PNG/JPEG por HTTP são experimentais; não equivalem ao motor de vídeo pronto.
 4. Serviço do host/IPC e atualização assinada do aplicativo.
 5. E2E em duas máquinas reais e testes de segurança cross-platform.
 6. Escolha explícita da licença do Seven Desk; o código provisório usa `UNLICENSED`.
+
+## Chat por sessão no laboratório — 17/10/2026
+
+Foi integrado um canal de chat textual opcional ao convite e à interface Tauri. O host concede `chat` separadamente; o servidor valida a permissão em cada envio/leitura, limita o histórico temporário e elimina as mensagens ao encerrar ou revogar. O conteúdo ainda é legível pelo servidor de laboratório (mesmo quando o transporte usa HTTPS), portanto **não representa chat seguro de produção nem paridade funcional com o AnyDesk**.
+
+## Seleção de monitor Windows no laboratório — 17/10/2026
+
+O host pode listar os monitores disponíveis e escolher localmente qual será capturado na próxima publicação de quadro. Uma troca de monitor interrompe o envio periódico, apaga o quadro no servidor quando alcançável e desliga o mouse remoto no processo nativo; o host precisa iniciar os quadros novamente. A captura falha se o monitor escolhido desaparecer ou se o estado de monitor principal mudar durante a captura. **Monitor secundário é somente visualização/teclado nesta fase**: Enigo ainda mapeia coordenadas absolutas de mouse apenas no monitor principal. Compilação Windows passou, mas troca de monitor e DPI ainda exigem teste em uma máquina com múltiplos monitores.
+
+## Endereço de servidor configurável no laboratório — 17/10/2026
+
+O usuário pode salvar uma URL base no aplicativo instalado. A validação nativa exige HTTPS fora de `localhost`/loopback, rejeita credenciais/caminhos/parâmetros e mantém prioridade para `SEVEN_DESK_DEV_SERVER_URL` quando definida. Ao mudar de servidor, a interface para captura e entrada locais, tenta revogar sessões no servidor anterior, limpa os dados exibidos e exige novo registro. Falhas de revogação são avisadas e as sessões temporárias expiram pelo TTL do backend. O endereço salvo não altera a limitação de segurança ou disponibilidade do servidor de desenvolvimento.
+
+## Verificação local desta revisão — 17/10/2026
+
+Na revisão anterior, passaram **38 testes Rust do workspace**, **4 testes da biblioteca Tauri**, build TypeScript/Vite, smoke da interface e **7 checagens de sessão assinada** contra o servidor local. O build Tauri Windows gerou MSI e NSIS de QA. O instalador Windows está **sem assinatura digital**. Não foi executada instalação em máquina limpa nem teste presencial de duas máquinas; essas evidências continuam necessárias antes de release. Após a inclusão da prévia JPEG, o teste nativo de codificação RGBA elevou a suíte Tauri para **5 testes**; o teste de autorização da API cobre agora os dois formatos e a rejeição de tipo MIME incorreto.
+
+## Prévia JPEG mais frequente — 17/10/2026
+
+O host usa o gravador contínuo de Windows.Graphics.Capture oferecido pelo XCap, codifica os quadros recebidos em JPEG e tenta publicar no máximo um a cada ~67 ms. Codificação e envio ficam em um único trabalhador com contrapressão; parar a sessão, perder a autorização ou trocar de monitor encerra o gravador. Minimizar a janela de atendimento mantém a captura autorizada. O envio manual continua em PNG. O servidor valida formato, tipo MIME, dimensões, tamanho de até 2 MiB, identidade, consentimento e prazo da sessão antes de guardar somente o último quadro em memória. Revogação e parada apagam o buffer. A taxa efetiva e a latência ainda não foram medidas em duas máquinas; isto **não implementa codec de vídeo, transporte em tempo real, relay NAT nem E2EE**.
+
+A captura avulsa anterior usava GDI/BitBlt porque a funcionalidade `wgc` do XCap estava desativada. Ela agora usa Windows.Graphics.Capture também. O caminho atual exige Windows moderno com suporte à API e precisa de validação presencial de hotplug, DPI, janela minimizada, indicadores visíveis e encerramento de recursos.
+
+## Captura e entrada em três instaladores — 17/10/2026
+
+O mesmo fluxo de consentimento e quadros foi ligado aos backends nativos do XCap em Windows, macOS e Linux. Windows usa Windows.Graphics.Capture; macOS usa AVFoundation/AVCaptureScreenInput e exige permissão de Gravação de Tela; Linux usa X11 ou a combinação ScreenCast portal/PipeWire no Wayland, quando a enumeração de monitores e o portal da sessão funcionam. A entrada via Enigo usa as APIs do Windows/macOS e X11 no Linux. O macOS exige permissão de Acessibilidade, verificada ao ativar o controle; Wayland permanece sem injeção de mouse/teclado até integrar uma sessão autorizada do portal RemoteDesktop. O mouse fica limitado ao monitor principal em todas as plataformas.
+
+O workflow `installers.yml` compila e executa os testes nativos no Windows, macOS e Ubuntu e empacota NSIS/MSI, DMG e DEB/RPM de QA. Os pacotes não são assinados ou notarizados. Nesta máquina Windows passaram a compilação nativa, 5 testes Tauri, 38 testes do workspace e o build da interface; os jobs macOS/Linux e uma sessão real entre sistemas ainda precisam ser executados. A prévia permanece JPEG/HTTP a até 15 FPS e não deve ser chamada de vídeo fluido de baixa latência.
 
 Apenas uma issue pode ser fechada quando **todos** seus critérios de aceitação estiverem evidenciados em PR, CI e testes exigidos. Não marcar o MVP como pronto apenas por conseguir abrir a interface.
 

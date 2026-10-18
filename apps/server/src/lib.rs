@@ -169,6 +169,21 @@ async fn health() -> Json<Status<'static>> {
 }
 
 #[derive(Serialize)]
+struct RelayStatus<'a> {
+    status: &'a str,
+    transport: &'a str,
+    production_ready: bool,
+}
+
+async fn relay_health() -> Json<RelayStatus<'static>> {
+    Json(RelayStatus {
+        status: "ok",
+        transport: "signed-http-relay",
+        production_ready: false,
+    })
+}
+
+#[derive(Serialize)]
 struct Registered {
     device_id: DeviceId,
     status: &'static str,
@@ -548,7 +563,8 @@ async fn list_chat(
 }
 
 struct StoredFrame {
-    png: Vec<u8>,
+    data: Vec<u8>,
+    content_type: &'static str,
     received_at_ms: u64,
 }
 
@@ -564,6 +580,20 @@ fn valid_png_header(png: &[u8]) -> bool {
     let width = u32::from_be_bytes(png[16..20].try_into().unwrap_or_default());
     let height = u32::from_be_bytes(png[20..24].try_into().unwrap_or_default());
     (1..=8_192).contains(&width) && (1..=8_192).contains(&height)
+}
+
+fn valid_jpeg_header(jpeg: &[u8]) -> bool {
+    use std::io::Cursor;
+    if jpeg.len() < 4
+        || jpeg.len() > MAX_FRAME_BYTES
+        || !jpeg.starts_with(b"\xff\xd8")
+        || !jpeg.ends_with(b"\xff\xd9")
+    {
+        return false;
+    }
+    image::ImageReader::with_format(Cursor::new(jpeg), image::ImageFormat::Jpeg)
+        .into_dimensions()
+        .is_ok_and(|(width, height)| (1..=8_192).contains(&width) && (1..=8_192).contains(&height))
 }
 
 fn authorized_frame_peer(
@@ -638,8 +668,8 @@ async fn configure_screen_delivery(
     }))
 }
 
-/// Explicitly consented host uploads a single PNG frame. This is a local
-/// loopback-only PoC, NOT encrypted remote transport or unattended streaming.
+/// Explicitly consented host uploads one bounded PNG or JPEG frame. This is
+/// still a lab preview, not encrypted remote transport or a video stream.
 async fn publish_frame(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
@@ -649,15 +679,20 @@ async fn publish_frame(
     let path = format!("/v1/sessions/{id}/frame");
     let host = authenticated(&state, &headers, "POST", &path, &body)?;
     known(&state, host)?;
+    let content_type = match headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+    {
+        Some("image/png") if valid_png_header(&body) => "image/png",
+        Some("image/jpeg") if valid_jpeg_header(&body) => "image/jpeg",
+        _ => return Err(ApiError::Invalid),
+    };
     let now = now_ms();
     // Always lock sessions before frames. A concurrent revocation cannot be
     // followed by a late upload restoring previously cached screen pixels.
     let mut sessions = state.sessions.lock().map_err(|_| ApiError::Unavailable)?;
     let machine = sessions.get_mut(&SessionId(id)).ok_or(ApiError::NotFound)?;
     authorized_frame_peer(machine, host, true, now)?;
-    if !valid_png_header(&body) {
-        return Err(ApiError::Invalid);
-    }
     let mut frames = state.frames.lock().map_err(|_| ApiError::Unavailable)?;
     frames.retain(|_, frame| now.saturating_sub(frame.received_at_ms) <= FRAME_FRESHNESS_MS);
     if !frames.contains_key(&SessionId(id)) && frames.len() >= MAX_CACHED_FRAMES {
@@ -666,7 +701,8 @@ async fn publish_frame(
     frames.insert(
         SessionId(id),
         StoredFrame {
-            png: body.to_vec(),
+            data: body.to_vec(),
+            content_type,
             received_at_ms: now,
         },
     );
@@ -696,10 +732,10 @@ async fn read_frame(
     }
     Ok((
         [
-            (header::CONTENT_TYPE, "image/png"),
+            (header::CONTENT_TYPE, frame.content_type),
             (header::CACHE_CONTROL, "no-store"),
         ],
-        frame.png.clone(),
+        frame.data.clone(),
     )
         .into_response())
 }
@@ -1119,6 +1155,7 @@ async fn get_session(
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
+        .route("/v1/relay/healthz", get(relay_health))
         .route(
             "/healthz",
             get(health).layer(
@@ -1174,6 +1211,24 @@ mod tests {
     use tower::ServiceExt;
 
     #[tokio::test]
+    async fn relay_health_exposes_integrated_transport_without_claiming_production() {
+        let response = router(Arc::new(AppState::default()))
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/relay/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 4096).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["transport"], "signed-http-relay");
+        assert_eq!(value["production_ready"], false);
+    }
+
+    #[tokio::test]
     async fn health_marks_server_as_not_production_ready() {
         let response = router(Arc::new(AppState::default()))
             .oneshot(
@@ -1219,10 +1274,19 @@ mod tests {
         let timestamp = now_ms();
         let proof = message_to_sign(method, path, &body, nonce, timestamp).unwrap();
         let signature = key.sign(&proof);
+        let content_type = if method == "POST" && path.ends_with("/frame") {
+            if body.starts_with(b"\xff\xd8") {
+                "image/jpeg"
+            } else {
+                "image/png"
+            }
+        } else {
+            "application/json"
+        };
         Request::builder()
             .method(method)
             .uri(path)
-            .header("content-type", "application/json")
+            .header("content-type", content_type)
             .header("x-seven-key", hex::encode(key.verifying_key().as_bytes()))
             .header("x-seven-signature", hex::encode(signature.to_bytes()))
             .header("x-seven-nonce", nonce.to_string())
@@ -2384,6 +2448,45 @@ mod tests {
             png
         );
 
+        // Compact preview uses JPEG but must keep the same identity, consent,
+        // freshness and no-cache gates as a manually uploaded PNG.
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            2,
+            2,
+            image::Rgb([40, 80, 120]),
+        ))
+        .write_to(&mut encoded, image::ImageFormat::Jpeg)
+        .unwrap();
+        let jpeg = encoded.into_inner();
+        assert!(valid_jpeg_header(&jpeg));
+        let mut wrong_type = signed_request(&host, "POST", &path, jpeg.clone());
+        wrong_type
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, "image/png".parse().unwrap());
+        let rejected = service.clone().oneshot(wrong_type).await.unwrap();
+        assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+        let uploaded = service
+            .clone()
+            .oneshot(signed_request(&host, "POST", &path, jpeg.clone()))
+            .await
+            .unwrap();
+        assert_eq!(uploaded.status(), StatusCode::NO_CONTENT);
+        let fetched = service
+            .clone()
+            .oneshot(signed_request(&operator, "GET", &path, vec![]))
+            .await
+            .unwrap();
+        assert_eq!(fetched.headers()[header::CONTENT_TYPE], "image/jpeg");
+        assert_eq!(fetched.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(
+            to_bytes(fetched.into_body(), MAX_FRAME_BYTES)
+                .await
+                .unwrap()
+                .as_ref(),
+            jpeg
+        );
+
         // A host's explicit Stop must clear the private frame and deny a
         // concurrent/late upload until the same host deliberately resumes.
         let delivery_path = format!("/v1/sessions/{}/screen-delivery", id.0);
@@ -2582,7 +2685,8 @@ mod tests {
         state.frames.lock().unwrap().insert(
             session_id,
             StoredFrame {
-                png: vec![1, 2, 3],
+                data: vec![1, 2, 3],
+                content_type: "image/png",
                 received_at_ms: now_ms(),
             },
         );

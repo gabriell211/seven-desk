@@ -12,11 +12,26 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Seven Desk",
         "width": 1180,
         "height": 760,
+        "maximized": true,
+        "visible": false,
         "minWidth": 700,
         "minHeight": 560,
+        "backgroundColor": "#10141d"
+      },
+      {
+        "label": "invitation",
+        "title": "Seven Desk — Pedido de conexão",
+        "url": "index.html?window=invitation",
+        "width": 918,
+        "height": 642,
+        "minWidth": 700,
+        "minHeight": 500,
+        "center": true,
+        "visible": false,
         "backgroundColor": "#10141d"
       }
     ],

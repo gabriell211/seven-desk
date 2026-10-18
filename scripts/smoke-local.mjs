@@ -89,6 +89,10 @@ async function main() {
     assert.equal(health.status, "ok");
     assert.equal(health.production_ready, false);
     assert.ok(health.protocol > 0);
+    const relay = await (await fetch(`${base}/v1/relay/healthz`)).json();
+    assert.equal(relay.status, "ok");
+    assert.equal(relay.transport, "signed-http-relay");
+    assert.equal(relay.production_ready, false);
     const unsigned = await fetch(`${base}/v1/devices`, {
       method: "POST", headers: { "content-type": "application/json" }, body: "{}",
     });
@@ -97,7 +101,7 @@ async function main() {
       method: "POST", headers: { "content-type": "application/json" }, body: "bad-payload",
     });
     assert.equal(invalid.status, 400, "API deve rejeitar payload de cadastro invalido");
-    process.stdout.write("OK: fixtures, health HTTP, ausencia de banco, assinatura e payload invalido\n");
+    process.stdout.write("OK: fixtures, servidor e relay HTTP, ausencia de banco, assinatura e payload invalido\n");
   } finally {
     await stop(service);
   }

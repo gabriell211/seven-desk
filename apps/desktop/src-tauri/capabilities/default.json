@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Minimally privileged desktop UI",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "windows": ["main", "invitation"],
+  "permissions": ["core:default", "core:window:allow-show", "core:window:allow-hide", "core:window:allow-unminimize", "core:window:allow-set-focus", "core:window:allow-minimize", "core:event:allow-emit-to"]
 }
