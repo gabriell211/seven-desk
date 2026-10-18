@@ -88,6 +88,8 @@ jobs:
         run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
       - name: Test native HTTPS endpoint validation
         run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib server_config::tests
+      - name: Test RustDesk OSS rendezvous framing and hostile responses
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib rustdesk_transport::tests
 
   tauri-windows:
     name: Tauri native compilation (Windows)

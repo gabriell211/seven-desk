@@ -32,8 +32,10 @@ fn validate_host(input: &str) -> Result<&str, String> {
         || !host
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
-        || host.starts_with(['-', '.'])
-        || host.ends_with(['-', '.'])
+        || host.starts_with('-')
+        || host.starts_with('.')
+        || host.ends_with('-')
+        || host.ends_with('.')
         || host.split('.').any(|label| label.is_empty() || label.len() > 63 ||
             label.starts_with('-') || label.ends_with('-'))
     {
