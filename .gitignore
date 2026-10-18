@@ -16,3 +16,6 @@ Thumbs.db
 *.pfx
 **/src-tauri/gen/
 artifacts/qa/
+
+# Identidade e banco local gerados pelo servidor RustDesk OSS
+deploy/rustdesk-oss/data/

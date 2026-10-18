@@ -1,5 +1,7 @@
 # Seven Desk — infraestrutura necessária
 
+> **Nova opção OSS em preparação (18/10/2026):** [deploy/rustdesk-oss](../deploy/rustdesk-oss/README.md) sobe o rendezvous `hbbs` e o relay `hbbr` de protocolo Protobuf TCP/UDP. O diagnóstico `TestNatRequest` do Seven Desk não significa integração de sessões; consulte [plano de migração](RUSTDESK_MIGRACAO.md) e mantenha o laboratório HTTP atual sob VPN até E2E real.
+
 ## Resposta direta
 
 **Vercel não é obrigatório.** O aplicativo desktop é instalado nos computadores. Para um teste local, basta executar o servidor Rust em loopback na mesma máquina; para duas máquinas no laboratório, o projeto já documenta proxy HTTPS e VPN privada em [TESTE_MULTIMAQUINA.md](TESTE_MULTIMAQUINA.md).

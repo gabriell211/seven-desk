@@ -29,6 +29,21 @@ export async function getRelayStatus(): Promise<RelayStatus | null> {
   return invoke<RelayStatus>("relay_status");
 }
 
+export interface RustDeskServerProbe {
+  host: string;
+  port: number;
+  observed_port: number;
+  protocol: "rustdesk-rendezvous-protobuf";
+  authenticated: boolean;
+  sessions_enabled: boolean;
+}
+
+/** Diagnostic only. Does not register or authenticate a Seven Desk session. */
+export async function probeRustDeskServer(host: string): Promise<RustDeskServerProbe> {
+  if (!isTauri()) throw new Error("Diagnóstico disponível somente no Seven Desk instalado.");
+  return invoke<RustDeskServerProbe>("probe_rustdesk_server", { host });
+}
+
 export interface ServerConfiguration {
   url: string;
   environment_override: boolean;

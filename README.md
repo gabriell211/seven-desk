@@ -7,12 +7,16 @@
 
 **Plataforma multiplataforma de assistência remota, administração de dispositivos e colaboração em tempo real.**
 
-[Visão geral](#visão-geral) · [Funcionalidades](#funcionalidades) · [Arquitetura](#arquitetura-proposta) · [Infraestrutura](docs/INFRAESTRUTURA.md) · [Segurança](#segurança-e-privacidade) · [Roadmap](docs/ROADMAP.md) · [Contribuição](#desenvolvimento-e-contribuição)
+[Visão geral](#visão-geral) · [Migração RustDesk OSS](docs/RUSTDESK_MIGRACAO.md) · [Funcionalidades](#funcionalidades) · [Arquitetura](#arquitetura-proposta) · [Infraestrutura](docs/INFRAESTRUTURA.md) · [Segurança](#segurança-e-privacidade) · [Roadmap](docs/ROADMAP.md) · [Contribuição](#desenvolvimento-e-contribuição)
 
 </div>
 
 > [!IMPORTANT]
 > **Status: desenvolvimento pré-alfa.** Já existem contratos Rust, identidade assinada, sinalização de sessão, interface Tauri/React e **captura nativa experimental no Windows, macOS e Linux** com publicação manual PNG ou prévia JPEG de até 15 quadros/segundo. O aplicativo registra o dispositivo automaticamente quando o servidor está disponível; cada pedido de acesso abre uma janela separada de aceite com permissões. Ao aceitar, o host inicia o compartilhamento e os controles concedidos, depois minimiza apenas essa janela de atendimento. A janela principal permanece aberta. Ao restaurar a janela de atendimento, ela mostra **Finalizar**. O operador abre a tela remota automaticamente. Linux Wayland depende dos portais disponíveis na sessão gráfica e não oferece entrada remota nesta versão. O mouse remoto continua restrito ao monitor principal. O teclado aceita caracteres e algumas teclas de edição/navegação, sem atalhos. Há **chat textual temporário** mediante autorização do host, ainda legível pelo servidor de laboratório. **Ainda não há vídeo profissional, E2EE, serviço host completo nem plataforma homologada em E2E/produção.** Veja [o status técnico](docs/IMPLEMENTACAO.md) e as [issues](https://github.com/gabriell211/seven-desk/issues).
+
+## Infraestrutura RustDesk OSS (migração em andamento)
+
+Existe uma implantação opcional dos serviços livres **hbbs/hbbr** em [deploy/rustdesk-oss](deploy/rustdesk-oss/README.md) e uma verificação nativa do protocolo Protobuf/TCP em **Configurações → Servidor RustDesk OSS**. O teste comprova apenas resposta ao pedido de diagnóstico e **não** registra dispositivos, não autentica o servidor e não transmite sessões. A API HTTP anterior permanece disponível exclusivamente para o laboratório enquanto o adaptador P2P/relay, a criptografia ponta a ponta e o consentimento são implementados e homologados. Leia o [plano de migração](docs/RUSTDESK_MIGRACAO.md).
 
 ## Visão geral
 

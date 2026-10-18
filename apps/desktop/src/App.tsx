@@ -7,6 +7,7 @@ import { INVITATION_ACTION, INVITATION_READY, INVITATION_STATE, INVITATION_WINDO
 import {
   getBackendStatus,
   getRelayStatus,
+  probeRustDeskServer,
   getServerConfiguration,
   getProxyConfiguration,
   saveProxyConfiguration,
@@ -52,6 +53,7 @@ import {
   type ChatMessage,
   type HostMonitor,
   type ServerConfiguration,
+  type RustDeskServerProbe,
   type ProxyConfiguration,
 } from "./bridge";
 
@@ -88,6 +90,10 @@ export function App() {
   const [monitorBusy, setMonitorBusy] = useState(false);
   const [serverConfiguration, setServerConfiguration] = useState<ServerConfiguration | null>(null);
   const [serverUrlDraft, setServerUrlDraft] = useState("http://127.0.0.1:43821");
+  const [rustDeskHost, setRustDeskHost] = useState("");
+  const [rustDeskProbe, setRustDeskProbe] = useState<RustDeskServerProbe | null>(null);
+  const [rustDeskProbeMessage, setRustDeskProbeMessage] = useState("");
+  const [rustDeskChecking, setRustDeskChecking] = useState(false);
   const [serverSaving, setServerSaving] = useState(false);
   const [proxyConfiguration, setProxyConfiguration] = useState<ProxyConfiguration | null>(null);
   const [proxyModeDraft, setProxyModeDraft] = useState<ProxyConfiguration["mode"]>("direct");
@@ -956,6 +962,22 @@ export function App() {
       return revocationFailed;
   }
 
+  async function checkRustDeskServer(): Promise<void> {
+    if (rustDeskChecking) return;
+    setRustDeskChecking(true);
+    setRustDeskProbe(null);
+    setRustDeskProbeMessage("");
+    try {
+      const result = await probeRustDeskServer(rustDeskHost.trim());
+      setRustDeskProbe(result);
+      setRustDeskProbeMessage("Servidor hbbs respondeu ao diagnóstico. O protocolo de sessões Seven Desk ainda não está integrado.");
+    } catch (error: unknown) {
+      setRustDeskProbeMessage(error instanceof Error ? error.message : "Servidor hbbs indisponível.");
+    } finally {
+      setRustDeskChecking(false);
+    }
+  }
+
   async function saveServer(): Promise<void> {
     if (serverSaving || !serverConfiguration || serverConfiguration.environment_override) return;
     setServerSaving(true);
@@ -1416,6 +1438,20 @@ export function App() {
                 <span className="setting-value">{backendReady ? "Online" : "Offline"}</span></div>
               <div className="setting-row"><div><strong>Relay de conexão</strong><p>Encaminha tela e comandos das sessões autorizadas pelo mesmo servidor HTTPS.</p></div>
                 <span className="setting-value">{relayReady ? "Online" : "Offline"}</span></div>
+              <div className="setting-row"><div><strong>Servidor RustDesk OSS (hbbs)</strong>
+                <p>Diagnóstico de compatibilidade Protobuf por TCP/21116. Ainda não habilita sessões P2P nem autenticação.</p></div>
+                <div className="input-group network-input-group">
+                  <input aria-label="Hostname do servidor RustDesk OSS" type="text"
+                    placeholder="desk.exemplo.com" value={rustDeskHost}
+                    disabled={!status || rustDeskChecking}
+                    onChange={(event) => { setRustDeskHost(event.target.value.slice(0, 253)); setRustDeskProbe(null); setRustDeskProbeMessage(""); }} />
+                  <button className="secondary" type="button"
+                    disabled={!status || !rustDeskHost.trim() || rustDeskChecking}
+                    onClick={() => void checkRustDeskServer()}>{rustDeskChecking ? "Testando..." : "Testar hbbs"}</button>
+                </div>
+              </div>
+              {rustDeskProbeMessage && <p className="foot-note" role="status">{rustDeskProbeMessage}</p>}
+              {rustDeskProbe && <p className="foot-note">Resposta do hbbs: {rustDeskProbe.host}:{rustDeskProbe.port}. Porta externa observada: {rustDeskProbe.observed_port}. Nenhuma sessão foi iniciada.</p>}
               <div className="setting-row"><div><strong>Endereço do servidor</strong>
                 <p>Use HTTPS para outro computador. Salvar encerra as sessões locais e reconecta automaticamente.</p></div>
                 <div className="input-group network-input-group">

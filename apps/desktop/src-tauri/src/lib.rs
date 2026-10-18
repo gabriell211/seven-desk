@@ -3,6 +3,7 @@
 mod autostart;
 mod server_config;
 mod session_api;
+mod rustdesk_transport;
 
 use server_config::configured_server_url;
 use tauri::Manager;
@@ -169,6 +170,7 @@ pub fn run() {
             heartbeat_local_device,
             server_config::backend_status,
             server_config::relay_status,
+            rustdesk_transport::probe_rustdesk_server,
             server_config::server_configuration,
             server_config::validate_server_configuration,
             server_config::save_server_configuration,
