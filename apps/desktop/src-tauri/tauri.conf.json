@@ -54,7 +54,11 @@
         "languages": ["PortugueseBR", "English"],
         "displayLanguageSelector": false,
         "installerIcon": "icons/icon.ico",
-        "uninstallerIcon": "icons/icon.ico"
+        "uninstallerIcon": "icons/icon.ico",
+        "headerImage": "icons/installer-header.bmp",
+        "sidebarImage": "icons/installer-sidebar.bmp",
+        "uninstallerHeaderImage": "icons/installer-header.bmp",
+        "template": "installer.nsi"
       }
     }
   }

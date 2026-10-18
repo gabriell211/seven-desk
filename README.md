@@ -114,7 +114,7 @@ A distribuição oficial do aplicativo desktop deverá ser feita pelo **Instalad
 
 **Referências de engenharia:** [pesquisa de repositórios públicos e estratégia dos instaladores](docs/REFERENCIAS_TECNICAS.md).
 
-**Situação atual:** o Tauri consegue gerar **pacotes de QA não assinados**, com ícone e metadados do Seven Desk, mas os instaladores oficiais ainda **não foram homologados nem assinados**. O requisito está rastreado nas issues [#15](https://github.com/gabriell211/seven-desk/issues/15), [#23](https://github.com/gabriell211/seven-desk/issues/23) e [#38](https://github.com/gabriell211/seven-desk/issues/38). Uma distribuição portátil não faz parte do fluxo de instalação oficial e, se for considerada no futuro, exigirá escopo e aprovação separados.
+**Situação atual:** a distribuição de teste `v0.1.0-alpha.1` reúne pacotes nativos não assinados para Windows, macOS e Linux, com hashes publicados. O EXE do Windows tem arte própria e barra de progresso colorida. Os instaladores ainda **não foram homologados nem assinados**. Consulte as [notas do pré-lançamento](docs/RELEASE_0.1.0_ALPHA_1.md) antes de instalar. O requisito de distribuição oficial está rastreado nas issues [#15](https://github.com/gabriell211/seven-desk/issues/15), [#23](https://github.com/gabriell211/seven-desk/issues/23) e [#38](https://github.com/gabriell211/seven-desk/issues/38). Uma distribuição portátil não faz parte do fluxo de instalação oficial e, se for considerada no futuro, exigirá escopo e aprovação separados.
 
 ## Experiência de usuário (diretrizes)
 

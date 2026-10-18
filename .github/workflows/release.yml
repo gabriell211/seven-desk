@@ -1,0 +1,87 @@
+name: Seven Desk prerelease
+
+on:
+  push:
+    tags:
+      - "v0.1.0-alpha.1"
+
+permissions:
+  contents: read
+
+jobs:
+  packages:
+    name: Package / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bundles: nsis,msi
+            extensions: .exe,.msi
+          - os: macos-latest
+            bundles: dmg
+            extensions: .dmg
+          - os: macos-15-intel
+            bundles: dmg
+            extensions: .dmg
+          - os: ubuntu-24.04
+            bundles: deb,rpm
+            extensions: .deb,.rpm
+    runs-on: ${{ matrix.os }}
+    env:
+      APPLE_SIGNING_IDENTITY: "-"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.90.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libxkbcommon-dev libxcb-randr0-dev pkg-config clang rpm
+      - name: Install JavaScript dependencies
+        run: npm install --no-package-lock --include=optional --no-audit --no-fund
+      - name: Generate native artwork
+        run: node scripts/generate-icons.mjs
+      - name: Test native session code
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib --locked
+      - name: Build installers
+        run: npm exec --workspace @seven/desktop -- tauri build --bundles ${{ matrix.bundles }}
+      - name: Stage installers
+        run: node scripts/stage-release.mjs apps/desktop/src-tauri/target/release/bundle release-assets ${{ matrix.extensions }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.os }}
+          path: release-assets/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish prerelease
+    needs: packages
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+      - name: Verify package set and write checksums
+        run: |
+          node scripts/verify-release-assets.mjs release-assets
+          node scripts/hash-installers.mjs release-assets
+          node scripts/hash-installers.mjs --verify release-assets
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" release-assets/* --verify-tag --prerelease --title "Seven Desk ${{ github.ref_name }} (pré-lançamento)" --notes-file docs/RELEASE_0.1.0_ALPHA_1.md

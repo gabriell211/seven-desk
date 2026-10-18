@@ -32,7 +32,9 @@ jobs:
             bundles: nsis,msi
           - os: macos-latest
             bundles: dmg
-          - os: ubuntu-22.04
+          - os: macos-15-intel
+            bundles: dmg
+          - os: ubuntu-24.04
             bundles: deb,rpm
     runs-on: ${{ matrix.os }}
     env:
