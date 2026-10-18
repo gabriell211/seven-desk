@@ -1,0 +1,28 @@
+services:
+  server:
+    build:
+      context: ../..
+      dockerfile: deploy/self-hosted/Dockerfile
+    restart: unless-stopped
+    environment:
+      SEVEN_BIND: 127.0.0.1:43821
+      RUST_LOG: seven_server=info
+    ports:
+      - "443:443"
+    security_opt:
+      - no-new-privileges:true
+
+  relay-gateway:
+    image: caddy:2
+    restart: unless-stopped
+    network_mode: service:server
+    depends_on:
+      - server
+    environment:
+      SEVEN_DOMAIN: ${SEVEN_DOMAIN:?set SEVEN_DOMAIN}
+      SEVEN_VPN_CIDR: ${SEVEN_VPN_CIDR:?set SEVEN_VPN_CIDR}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./tls:/etc/caddy/tls:ro
+    security_opt:
+      - no-new-privileges:true

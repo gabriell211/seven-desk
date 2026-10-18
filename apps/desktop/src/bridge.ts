@@ -1,4 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 export interface LocalStatus {
   app_name: string;
@@ -7,6 +8,7 @@ export interface LocalStatus {
   architecture: string;
   device_id: string | null;
   host_service_available: boolean;
+  native_input_available: boolean;
 }
 
 export interface BackendStatus {
@@ -14,6 +16,68 @@ export interface BackendStatus {
   release: string;
   protocol: number;
   production_ready: boolean;
+}
+
+export interface RelayStatus {
+  status: "ok";
+  transport: "signed-http-relay";
+  production_ready: boolean;
+}
+
+export async function getRelayStatus(): Promise<RelayStatus | null> {
+  if (!isTauri()) return null;
+  return invoke<RelayStatus>("relay_status");
+}
+
+export interface ServerConfiguration {
+  url: string;
+  environment_override: boolean;
+}
+
+export interface ProxyConfiguration {
+  mode: "direct" | "system" | "manual";
+  url: string;
+  environment_override: boolean;
+}
+
+export async function getProxyConfiguration(): Promise<ProxyConfiguration | null> {
+  if (!isTauri()) return null;
+  return invoke<ProxyConfiguration>("proxy_configuration");
+}
+
+export async function saveProxyConfiguration(mode: ProxyConfiguration["mode"], url: string): Promise<ProxyConfiguration> {
+  if (!isTauri()) throw new Error("Configuração disponível apenas no aplicativo instalado.");
+  return invoke<ProxyConfiguration>("save_proxy_configuration", { mode, url });
+}
+
+export async function validateProxyConfiguration(mode: ProxyConfiguration["mode"], url: string): Promise<ProxyConfiguration> {
+  if (!isTauri()) throw new Error("Configuração disponível apenas no aplicativo instalado.");
+  return invoke<ProxyConfiguration>("validate_proxy_configuration", { mode, url });
+}
+
+export async function getAutostartStatus(): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>("autostart_status");
+}
+
+export async function setAutostart(enabled: boolean): Promise<boolean> {
+  if (!isTauri()) throw new Error("Inicialização automática disponível apenas no aplicativo instalado.");
+  return invoke<boolean>("set_autostart", { enabled });
+}
+
+export async function getServerConfiguration(): Promise<ServerConfiguration | null> {
+  if (!isTauri()) return null;
+  return invoke<ServerConfiguration>("server_configuration");
+}
+
+export async function saveServerConfiguration(url: string): Promise<ServerConfiguration> {
+  if (!isTauri()) throw new Error("Configuração disponível apenas no aplicativo instalado.");
+  return invoke<ServerConfiguration>("save_server_configuration", { url });
+}
+
+export async function validateServerConfiguration(url: string): Promise<string> {
+  if (!isTauri()) throw new Error("Configuração disponível apenas no aplicativo instalado.");
+  return invoke<string>("validate_server_configuration", { url });
 }
 
 export async function initializeIdentity(): Promise<string> {
@@ -97,6 +161,24 @@ export async function listSessionChat(sessionId: string): Promise<ChatMessage[]>
   return invoke<ChatMessage[]>("list_session_chat", { sessionId });
 }
 
+export interface HostMonitor {
+  id: number;
+  name: string;
+  width: number;
+  height: number;
+  is_primary: boolean;
+}
+
+export async function listHostMonitors(): Promise<HostMonitor[]> {
+  if (!isTauri()) return [];
+  return invoke<HostMonitor[]>("list_host_monitors");
+}
+
+export async function selectHostMonitor(monitorId: number): Promise<HostMonitor> {
+  if (!isTauri()) throw new Error("Seleção de monitores disponível apenas no aplicativo instalado.");
+  return invoke<HostMonitor>("select_host_monitor", { monitorId });
+}
+
 export type SessionState = "awaiting_consent" | "active" | "rejected" | "ended";
 
 /** Restricted to the native desktop; no private keys or raw signed URLs enter JS. */
@@ -157,11 +239,38 @@ export async function publishManualFrame(sessionId: string): Promise<void> {
   return invoke<void>("publish_manual_screen_frame", { sessionId });
 }
 
-/** Signed, authorized retrieval. The PNG never comes from an unauthenticated URL. */
+export async function startHostStreamCapture(sessionId: string): Promise<void> {
+  if (!isTauri()) throw new Error("Captura disponível apenas no aplicativo instalado.");
+  return invoke<void>("start_host_stream_capture", { sessionId });
+}
+
+export async function stopHostStreamCapture(sessionId: string): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("stop_host_stream_capture", { sessionId });
+}
+
+export async function onHostStreamStopped(
+  callback: (event: { session_id: string; message: string }) => void
+): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  return listen<{ session_id: string; message: string }>("seven:stream-stopped", (event) => {
+    callback(event.payload);
+  });
+}
+
+export async function onHostInputStopped(
+  callback: (event: { session_id: string; kind: "mouse" | "keyboard"; message: string }) => void
+): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  return listen<{ session_id: string; kind: "mouse" | "keyboard"; message: string }>(
+    "seven:host-input-stopped", (event) => callback(event.payload)
+  );
+}
+
+/** Signed, authorized retrieval. Pixels never come from an unauthenticated URL. */
 export async function getAuthorizedFrame(sessionId: string): Promise<string> {
   if (!isTauri()) throw new Error("Visualização disponível apenas no aplicativo instalado.");
-  const encoded = await invoke<string>("fetch_authorized_screen_frame", { sessionId });
-  return `data:image/png;base64,${encoded}`;
+  return invoke<string>("fetch_authorized_screen_frame", { sessionId });
 }
 
 /** Mouse events are bounded to the main display. */

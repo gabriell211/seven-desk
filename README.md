@@ -7,12 +7,12 @@
 
 **Plataforma multiplataforma de assistência remota, administração de dispositivos e colaboração em tempo real.**
 
-[Visão geral](#visão-geral) · [Funcionalidades](#funcionalidades) · [Arquitetura](#arquitetura-proposta) · [Segurança](#segurança-e-privacidade) · [Roadmap](docs/ROADMAP.md) · [Contribuição](#desenvolvimento-e-contribuição)
+[Visão geral](#visão-geral) · [Funcionalidades](#funcionalidades) · [Arquitetura](#arquitetura-proposta) · [Infraestrutura](docs/INFRAESTRUTURA.md) · [Segurança](#segurança-e-privacidade) · [Roadmap](docs/ROADMAP.md) · [Contribuição](#desenvolvimento-e-contribuição)
 
 </div>
 
 > [!IMPORTANT]
-> **Status: desenvolvimento pré-alfa.** Já existem contratos Rust, identidade assinada, sinalização de sessão, interface Tauri/React e **captura real do monitor principal no Windows com publicação manual ou atualização experimental de até ~1 quadro/segundo**, condicionada a autorização e início voluntário pelo host. Há controle explícito para pausar e encerrar a entrega de tela. **Mouse e teclado básicos experimentais no Windows** exigem permissões separadas, ativação voluntária no host e parada visível. O teclado aceita caracteres e algumas teclas de edição/navegação, sem atalhos. **Ainda não há vídeo profissional, E2EE, serviço host completo nem plataforma homologada em E2E/produção.** A maioria dos recursos continua planejada. Veja [o status técnico](docs/IMPLEMENTACAO.md) e as [issues](https://github.com/gabriell211/seven-desk/issues).
+> **Status: desenvolvimento pré-alfa.** Já existem contratos Rust, identidade assinada, sinalização de sessão, interface Tauri/React e **captura nativa experimental no Windows, macOS e Linux** com publicação manual PNG ou prévia JPEG de até 15 quadros/segundo. O aplicativo registra o dispositivo automaticamente quando o servidor está disponível; cada pedido de acesso abre uma janela separada de aceite com permissões. Ao aceitar, o host inicia o compartilhamento e os controles concedidos, depois minimiza apenas essa janela de atendimento. A janela principal permanece aberta. Ao restaurar a janela de atendimento, ela mostra **Finalizar**. O operador abre a tela remota automaticamente. Linux Wayland depende dos portais disponíveis na sessão gráfica e não oferece entrada remota nesta versão. O mouse remoto continua restrito ao monitor principal. O teclado aceita caracteres e algumas teclas de edição/navegação, sem atalhos. Há **chat textual temporário** mediante autorização do host, ainda legível pelo servidor de laboratório. **Ainda não há vídeo profissional, E2EE, serviço host completo nem plataforma homologada em E2E/produção.** Veja [o status técnico](docs/IMPLEMENTACAO.md) e as [issues](https://github.com/gabriell211/seven-desk/issues).
 
 ## Visão geral
 
@@ -81,8 +81,8 @@ A tabela a seguir é o **escopo-alvo**, não uma lista de funcionalidades pronta
 | --- | --- | --- | --- |
 | Windows 10/11 | Planejado | Planejado | Serviço para cenários que exigem execução antes do login, com UAC e privilégios tratados de forma segura |
 | Windows Server | Planejado | Planejado | Suporte condicionado a testes por versão/edição e políticas corporativas |
-| Linux | Planejado | Planejado | X11 e Wayland exigem caminhos de captura/entrada distintos; priorizar portais oficiais |
-| macOS | Planejado | Planejado | Requer autorizações do sistema para gravação de tela, acessibilidade e entrada |
+| Linux | Experimental | Experimental | Captura X11/Wayland via XCap; Wayland depende do portal e não oferece entrada remota nesta versão; mouse e teclado apenas em X11 |
+| macOS | Experimental | Experimental | Captura via AVFoundation; Gravação de Tela e Acessibilidade exigem consentimento do sistema |
 | Android | Planejado | Visualização/controle apenas quando permitido pela plataforma | Hospedagem e injeção de entrada dependem de APIs/permissões suportadas |
 | iOS/iPadOS | Planejado | Compartilhamento compatível com APIs oficiais | Controle remoto irrestrito de terceiros não deve ser prometido |
 | Navegador | Futuro | Não previsto inicialmente | Cliente web requer avaliação de segurança e restrições de dispositivos |
@@ -114,7 +114,7 @@ A distribuição oficial do aplicativo desktop deverá ser feita pelo **Instalad
 
 **Referências de engenharia:** [pesquisa de repositórios públicos e estratégia dos instaladores](docs/REFERENCIAS_TECNICAS.md).
 
-**Situação atual:** o Tauri consegue gerar **pacotes de QA não assinados**, com ícone e metadados do Seven Desk, mas os instaladores oficiais ainda **não foram homologados nem assinados**. O requisito está rastreado nas issues [#15](https://github.com/gabriell211/seven-desk/issues/15), [#23](https://github.com/gabriell211/seven-desk/issues/23) e [#38](https://github.com/gabriell211/seven-desk/issues/38). Uma distribuição portátil não faz parte do fluxo de instalação oficial e, se for considerada no futuro, exigirá escopo e aprovação separados.
+**Situação atual:** a distribuição de teste `v0.1.0-alpha.1` reúne pacotes nativos não assinados para Windows, macOS e Linux, com hashes publicados. O EXE do Windows tem arte própria e barra de progresso colorida. Os instaladores ainda **não foram homologados nem assinados**. Consulte as [notas do pré-lançamento](docs/RELEASE_0.1.0_ALPHA_1.md) antes de instalar. O requisito de distribuição oficial está rastreado nas issues [#15](https://github.com/gabriell211/seven-desk/issues/15), [#23](https://github.com/gabriell211/seven-desk/issues/23) e [#38](https://github.com/gabriell211/seven-desk/issues/38). Uma distribuição portátil não faz parte do fluxo de instalação oficial e, se for considerada no futuro, exigirá escopo e aprovação separados.
 
 ## Experiência de usuário (diretrizes)
 

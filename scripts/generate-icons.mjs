@@ -134,6 +134,52 @@ function createIcns(images) {
   return Buffer.concat([header, ...records]);
 }
 
+function createBmp(width, height, pixel) {
+  const stride = (width * 3 + 3) & ~3;
+  const bmp = Buffer.alloc(54 + stride * height);
+  bmp.write("BM", 0, "ascii");
+  bmp.writeUInt32LE(bmp.length, 2);
+  bmp.writeUInt32LE(54, 10);
+  bmp.writeUInt32LE(40, 14);
+  bmp.writeInt32LE(width, 18);
+  bmp.writeInt32LE(height, 22);
+  bmp.writeUInt16LE(1, 26);
+  bmp.writeUInt16LE(24, 28);
+  bmp.writeUInt32LE(stride * height, 34);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const [r, g, b] = pixel(x, y);
+      const index = 54 + (height - 1 - y) * stride + x * 3;
+      bmp[index] = Math.round(b);
+      bmp[index + 1] = Math.round(g);
+      bmp[index + 2] = Math.round(r);
+    }
+  }
+  return bmp;
+}
+
+function installerPixel(x, y, width, height, logo) {
+  const t = (x / width) * 0.5 + (y / height) * 0.5;
+  const base = [18 + t * 15, 24 + t * 16, 40 + t * 30];
+  const [left, top, size] = logo;
+  const lx = (x - left) / size;
+  const ly = (y - top) / size;
+  if (lx >= 0 && lx <= 1 && ly >= 0 && ly <= 1 && inTile(lx, ly)) {
+    const blend = (lx + ly) / 2;
+    if (inSeven(lx, ly)) return [246, 248, 255];
+    return [76 + blend * 43, 116 - blend * 50, 255 - blend * 16];
+  }
+  // Fine diagonal trails and a bright seven-segment line anchor the artwork.
+  const trail = (x + y * 0.68) % 58;
+  if (trail < 1.2 && y > height * 0.52 && x > width * 0.25) {
+    return [base[0] + 20, base[1] + 24, base[2] + 48];
+  }
+  if (x > width * 0.13 && x < width * 0.87 && y > height * 0.83 && y < height * 0.845) {
+    return [89 + t * 25, 122 - t * 20, 255 - t * 12];
+  }
+  return base;
+}
+
 await mkdir(output, { recursive: true });
 const sizes = [16, 24, 32, 48, 64, 128, 256, 512];
 const pngs = new Map(sizes.map((size) => [size, createPng(size)]));
@@ -141,5 +187,9 @@ await Promise.all([
   writeFile(output + "icon.png", pngs.get(512)),
   writeFile(output + "icon.ico", createIco([16, 24, 32, 48, 64, 128, 256].map((size) => [size, pngs.get(size)]))),
   writeFile(output + "icon.icns", createIcns([16, 32, 64, 128, 256, 512].map((size) => [size, pngs.get(size)]))),
+  writeFile(output + "installer-header.bmp", createBmp(150, 57, (x, y) =>
+    installerPixel(x, y, 150, 57, [101, 5, 46]))),
+  writeFile(output + "installer-sidebar.bmp", createBmp(164, 314, (x, y) =>
+    installerPixel(x, y, 164, 314, [13, 54, 138]))),
 ]);
-process.stdout.write("Seven Desk native icons generated.\n");
+process.stdout.write("Seven Desk native icons and installer artwork generated.\n");

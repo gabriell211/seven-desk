@@ -32,7 +32,9 @@ jobs:
             bundles: nsis,msi
           - os: macos-latest
             bundles: dmg
-          - os: ubuntu-22.04
+          - os: macos-15-intel
+            bundles: dmg
+          - os: ubuntu-24.04
             bundles: deb,rpm
     runs-on: ${{ matrix.os }}
     env:
@@ -50,7 +52,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev pkg-config rpm
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libgbm-dev libxkbcommon-dev libxcb-randr0-dev pkg-config clang rpm
       # The committed npm lock currently contains only Windows native optional
       # packages; npm's platform-native resolution must be enabled until the
       # lock can be regenerated for all supported targets.
@@ -58,8 +60,12 @@ jobs:
         run: npm install --no-package-lock --include=optional --no-audit --no-fund
       - name: Generate Seven Desk icons
         run: node scripts/generate-icons.mjs
+      - name: Test native session code
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib --locked
       - name: Build installable native packages
         run: npm exec --workspace @seven/desktop -- tauri build --bundles ${{ matrix.bundles }}
+      - name: Hash QA packages
+        run: node scripts/hash-installers.mjs
       - name: Upload QA packages (NOT A RELEASE)
         uses: actions/upload-artifact@v4
         with:
@@ -68,5 +74,6 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-# These artifacts only verify packaging. They are NOT a support-ready product:
-# no remote media/control yet, and no production code-signing/notarization.
+# These artifacts only verify packaging and native unit tests on each OS.
+# Screen/input permissions, actual cross-OS sessions and signing/notarization
+# still require tests on installed systems before release.
