@@ -80,7 +80,7 @@ jobs:
       - name: Install Linux native dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libxkbcommon-dev libxcb-randr0-dev pkg-config clang
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libgbm-dev libxkbcommon-dev libxcb-randr0-dev pkg-config clang
       - run: npm install --no-package-lock --include=optional --no-audit --no-fund
       - run: npm run desktop:build
       - run: node scripts/generate-icons.mjs
