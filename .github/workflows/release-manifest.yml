@@ -1,0 +1,25 @@
+name: Repair prerelease checksum names
+
+on:
+  push:
+    tags:
+      - "manifest-v0.1.0-alpha.1"
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Write checksums using GitHub asset names
+        run: |
+          gh api repos/${{ github.repository }}/releases/tags/v0.1.0-alpha.1 \
+            --jq '.assets[] | select(.name != "SHA256SUMS.txt") | select(.digest | startswith("sha256:")) | "\(.digest[7:])  \(.name)"' \
+            | sort > SHA256SUMS.txt
+          test "$(wc -l < SHA256SUMS.txt)" -eq 6
+          grep -Eq '^[0-9a-f]{64}  .+$' SHA256SUMS.txt
+      - name: Replace the manifest in the published prerelease
+        run: gh release upload v0.1.0-alpha.1 SHA256SUMS.txt --clobber --repo ${{ github.repository }}

@@ -24,6 +24,7 @@ if (files.length !== extensions.size) {
 await mkdir(destination, { recursive: true });
 for (const path of files) {
   if (!(await stat(path)).size) throw new Error(`Empty package: ${path}`);
-  await copyFile(path, join(destination, basename(path)));
+  // GitHub converts spaces in uploaded asset names; keep manifests stable.
+  await copyFile(path, join(destination, basename(path).replaceAll(/\s+/g, "-")));
 }
 process.stdout.write(`Staged ${files.length} package(s) in ${destination}\n`);
